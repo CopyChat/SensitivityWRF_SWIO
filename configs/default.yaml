@@ -1,0 +1,44 @@
+# @package _global_
+
+hydra:
+  run:
+    # Output directory for normal runs
+#    dir: ./outputs/${now:%Y-%m-%d_%H-%M-%S}
+    dir: .
+
+# Directories
+dirs:
+  data: /Users/ctang/Microsoft_OneDrive/OneDrive/CODE/Sensitivity_swio/dataset
+  local_data: /Users/ctang/Microsoft_OneDrive/OneDrive/CODE/Sensitivity_swio/local_data
+  raw: /Users/ctang/Microsoft_OneDrive/OneDrive/CODE/Sensitivity_swio/local_data
+  working: /Users/ctang/Microsoft_OneDrive/OneDrive/CODE/Sensitivity_swio/
+  plot: /Users/ctang/Microsoft_OneDrive/OneDrive/CODE/Sensitivity_swio/plot
+
+jobs:
+  compare_sfc_var: 0
+  compare_vertical_var_era5: 1
+  compare_vertical_var: 0
+
+  plots:
+    head_to_head: 0
+    diurnal_map: 0
+    diurnal_box: 1
+    diurnal_stat: 1
+
+vars:
+  sfc_var_list: ['T2', 'SWDOWN']
+  vertical_var_list: ['U', 'V', 'W']
+  era5_vertical_var_list: ['u', 'v', 'w']
+
+values:
+  pressure_levels: []
+
+HUB_HEIGHT: 100
+
+
+
+
+
+
+
+

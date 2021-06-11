@@ -1,0 +1,148 @@
+&time_control
+ run_days                            = 0,                               ! not domain-dependent. ignored by real.exe
+ run_hours                           = 0,                               !
+ run_minutes                         = 0,                               !
+ run_seconds                         = 0,                               !
+ start_year                          = 2015,    2015,   2015,   2015,   ! okay for a nest start time to be later than its parent domain.
+ start_month                         = 12,      12,     12,     12,     !
+ start_day                           = 25,      25,     25,     25,     !
+ start_hour                          = 00,      00,     00,     00,     !
+ start_minute                        = 00,      00,     00,     00,     !
+ start_second                        = 00,      00,     00,     00,     !
+ end_year                            = 2015,    2015,   2015,   2015,   !
+ end_month                           = 12,      12,     12,     12,     !
+ end_day                             = 30,      30,     30,     30,     !
+ end_hour                            = 00,      00,     00,     00,     !
+ end_minute                          = 00,      00,     00,     00,     !
+ end_second                          = 00,      00,     00,     00,     !
+ interval_seconds                    = 10800,                           ! be the interval between the lateral boundary condition file (in seconds)
+ input_from_file                     = T,       T,      T,      T,      ! for real.exe program to create wrfinput_d0
+ history_interval                    = 360,     360,    360,    360,    ! history output interval in minutes, can be different for different domains
+ frames_per_outfile                  = 120,     120,    120,    120,    ! 120 ~ monthly output file
+ restart                             = F,                               !
+ restart_interval                    = 360,                             ! in minutes, 1440 ~ 1 day, 
+ io_form_history                     = 2,                               ! 2=netCDF
+ io_form_restart                     = 2,                               !
+ io_form_input                       = 2,                               !
+ io_form_boundary                    = 2,                               !
+ io_form_auxinput4                   = 2,                               !
+ iofields_filename                   = "myout_d01.txt", "myout_d02.txt", "myout_d03.txt", "myout_d03.txt", 
+ auxhist2_outname                    = "addout_d<domain>_<date>.nc",    ! file name for extra output to write variables in output other than 
+                                                                        !   the history file requires ! Registry.EM file change
+ auxhist2_interval                   = 60,      60,     60,     60,     ! interval in minutes
+ frames_per_auxhist2                 = 720,     720,    720,    720,    ! number of output times in this file
+ io_form_auxhist2                    = 2,                               ! 2 = netCDF
+ auxinput4_inname                    = "wrflowinp_d<domain>"            ! For SST updating (only with sst_update=1)
+ auxinput4_interval                  = 360,     360,    360,    360,    ! every 6 hour
+ output_diagnostics                  = 0,                               ! set to = 1 to add 36 surface diagnostic arrays (max,min,mean,std)B
+ auxhist3_outname                    = "wrfxtrm_d<domain>_<date>.nc",   ! file name for added diagnostics
+ io_form_auxhist3                    = 2,                               !
+ auxhist3_interval                   = 1440,    1440,   1440,   1440,   ! minutes between outputs (1440 gives daily max,min)
+ frames_per_auxhist3                 = 18600,   18600,  18600,  18600,  !
+ debug_level                         = 0,                               !
+ /
+
+ &domains
+ time_step                           = 54,                              ! see parent_time_step_ratio, 6*dx in km, evenly divides into history_interval
+ max_dom                             = 3,                               ! number of domains - set it to > 1 if it is a nested run
+ e_we                                = 301,     241,    361,    31,     !
+ e_sn                                = 226,     181,    271,    31,     !
+ e_vert                              = 37,      37,     37,     37,     !
+ num_metgrid_levels                  = 38,                              !
+ num_metgrid_soil_levels             = 4,                               ! number of vertical soil levels or layers input
+ dx                                  = 9000.,   3000.,  1000.,  1000.,  ! resolution in meter
+ dy                                  = 9000.,   3000.,  1000.,  1000.,  !
+ grid_id                             = 1,       2,      3,      4,      !
+ parent_id                           = 1,       1,      2,      3,      !
+ i_parent_start                      = 1,       135,    58,     100,    !
+ j_parent_start                      = 1,       60,     40,     100,    !
+ parent_grid_ratio                   = 1,       3,      3,      3,      !
+ parent_time_step_ratio              = 1,       3,      3,      3,      !
+ feedback                            = 0,                               !
+ smooth_option                       = 0,                               ! if feedback is on (feedback = 1), typically recommended to keep 0.
+ smooth_cg_topo = .true.
+ nproc_x                             = 24,      ! number of processors in x for decomposition
+ nproc_y                             = 18,      ! number of processors in y for decomposition 
+                                               ! -1: code will do automatic decomposition
+                                               ! >1: for both: will be used for decomposition
+ /
+
+
+&physics
+ physics_suite = 'CONUS',
+!mp_physics                          = 8,       8,      8,      8,      !
+!ra_lw_physics                       = 1,       1,      1,      1,      !
+!ra_sw_physics                       = 1,       1,      1,      1,      !
+ radt                                = 9,       3,      1,      1,      ! minutes between ra calls
+!sf_sfclay_physics                   = 1,       1,      1,      1,      !
+!sf_surface_physics                  = 4,       4,      4,      4,      !
+ bl_pbl_physics                      = 9,       9,      9,      9,      !
+ bldt                                = 0,       0,      0,      0,      !
+ cu_physics                          = 1,       0,      0,      0,      ! turn off CU when reso < 5km
+ cudt                                = 0,       0,      0,      0,      !
+ cugd_avedx                          = 1,                               ! number of grid boxes over which subsidence is spread: 
+                                                                        !   1, default, for large grid distances; 
+                                                                        !   3, for small grid distances (DX < 5 km)
+ kfeta_trigger                       = 2,                               ! KF trigger option (cu_physics=1 only)
+ isfflx                              = 1,                               ! heat and moisture fluxes from the surface
+ icloud                              = 1,                               ! cloud effect to the optical depth in radiation 
+                                                                        !   (only works for ra_sw_physics = 1,4 and ra_lw_physics = 1,4)
+                                                                        !   Since 3.6, this also controls the cloud fraction options
+                                                                        !   1 = with cloud effect, and use cloud fraction option 1 (Xu-Randall method)
+ surface_input_source                = 1,                               ! where landuse and soil category data come from: 
+                                                                        !   1 = WPS/geogrid but with dominant categories recomputed
+                                                                        !   2 = GRIB data from another model (only possible
+                                                                        !       (VEGCAT/SOILCAT are in met_em files from WPS) 
+                                                                        !   3 = use dominant land and soil categories from WPS/geogrid (default since 3.8))
+ num_soil_layers                     = 3,                               !
+ sf_urban_physics                    = 0,       0,      0,      0,      ! activate urban canopy model (in Noah and Noah-MP LSMs only)
+ maxiens                             = 1,                               !
+ maxens                              = 3,                               !
+ maxens2                             = 3,                               !
+ maxens3                             = 16,                              !
+ ensdim                              = 144,                             !
+ num_land_cat                        = 21,                              !
+ mp_zero_out                         = 0,                               ! no action taken, no adjustment to any moist field 
+ usemonalb                           = F,                               ! use monthly albedo map instead of table value 
+                                                                        ! (must be set to true for NMM, and recommended for sst_update=1)
+ sst_update                          = 0,                               !   time-varying sea-surface temp (0=no, 1=yes). If selected real 
+                                                                        ! puts SST, XICE, ALBEDO and VEGFRA in wrflowinp_d01 file, and wrf updates 
+                                                                        !   these from it at same interval as boundary file. Also requires
+                                                                        !   namelists in &time_control: auxinput4_interval, auxinput4_end_h,
+                                                                        !   auxinput4_inname = "wrflowinp_d<domain>", 
+                                                                        !   and in V3.2 io_form_auxinput4
+ /
+
+ &dynamics
+ w_damping                           = 1,                               ! vertical velocity damping flag (for operational use)
+ diff_opt                            = 1,       0,      0,      0,      ! turbulence and mixing option:
+ km_opt                              = 4,       4,      4,      4,      ! eddy coefficient option
+ diff_6th_opt                        = 2,       0,      0,      0,      !
+ diff_6th_factor                     = .12,     .12,    .12,    .12,    !
+ epssm                               = .2,      .2,     .2,     .2,     ! time off-centering for vertical sound waves
+ base_temp                           = 290.,                            !
+ damp_opt                            = 0,                               !
+ zdamp                               = 5000.,   5000.,  5000.,  5000.,  !
+ dampcoef                            = 0.01,    0.01,   0.01,   0.01,   !
+ khdif                               = 0,       0,      0,      0,      !
+ kvdif                               = 0,       0,      0,      0,      !
+ non_hydrostatic                     = T,       T,      T,      T,      !
+ moist_adv_opt                       = 1,       1,      1,      1,      !
+ scalar_adv_opt                      = 1,       1,      1,      1,      !
+ /
+
+ &bdy_control
+ spec_bdy_width                      = 5,                               !
+ spec_zone                           = 1,                               !
+ relax_zone                          = 4,                               !
+ specified                           = T,       F,      F,      F,      !
+ nested                              = F,       T,      T,      T,      !
+ /
+
+ &grib2
+ /
+
+ &namelist_quilt
+ nio_tasks_per_group                = 0,                                !
+ nio_groups                         = 1,                                !
+ /

@@ -1,0 +1,5 @@
+/plot
+*.nc
+*.temp
+/configs/config.ctang.yaml
+/local_data/domain/.DS_Store
