@@ -15,14 +15,20 @@ import GEO_PLOT
 @hydra.main(config_path="configs", config_name="default")
 def validation(cfg: DictConfig) -> None:
     # ----------------------------- compare -----------------------------
+
+    file11 = '~/local_data/SWIO-Energy/Sensitivity_test/domain_test/d3/wrfout_d01_2015-12-25_00:00:00'
+    a = GEO_PLOT.read_to_standard_da(file11, 'U')
+
     if cfg.jobs.compare_sfc_var:
         for var in cfg.vars.sfc_var_list:
             for resolution in ['3km', '1km']:
                 # example: 'U.addout_1km_d3.nc.temp.lastday.localtime.nc'
-                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}_d3.nc.temp.lastday.localtime.nc'
+                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}' \
+                          f'_d3.nc.temp.lastday.localtime.nc'
                 d3 = GEO_PLOT.read_to_standard_da(d3_file, var)
 
-                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}_d4.nc.temp.lastday.localtime.nc'
+                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}' \
+                          f'_d4.nc.temp.lastday.localtime.nc'
                 d4 = GEO_PLOT.read_to_standard_da(d4_file, var)
 
                 hour = 12
@@ -37,10 +43,12 @@ def validation(cfg: DictConfig) -> None:
     if cfg.jobs.compare_vertical_var:
         for var in cfg.vars.vertical_var_list:
             for resolution in ['3km', '1km']:
-                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}_d3.nc.temp.lastday.localtime.nc'
+                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}' \
+                          f'_d3.nc.temp.lastday.localtime.nc'
                 d3 = GEO_PLOT.read_to_standard_da(d3_file, var)
 
-                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}_d4.nc.temp.lastday.localtime.nc'
+                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}' \
+                          f'_d4.nc.temp.lastday.localtime.nc'
                 d4 = GEO_PLOT.read_to_standard_da(d4_file, var)
 
                 lev = 1  # 1000hPa, surface
@@ -67,10 +75,12 @@ def validation(cfg: DictConfig) -> None:
         for resolution in ['3km', '1km']:
             for var, era5_var in zip(cfg.vars.vertical_var_list, cfg.vars.era5_vertical_var_list):
 
-                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}_d3.nc.temp.lastday.localtime.nc'
+                d3_file = f'{cfg.dirs.local_data:s}/domain/d3/{var:s}.addout_{resolution:s}' \
+                          f'_d3.nc.temp.lastday.localtime.nc'
                 d3 = GEO_PLOT.read_to_standard_da(d3_file, var)
 
-                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}_d4.nc.temp.lastday.localtime.nc'
+                d4_file = f'{cfg.dirs.local_data:s}/domain/d4/{var:s}.addout_{resolution:s}' \
+                          f'_d4.nc.temp.lastday.localtime.nc'
                 d4 = GEO_PLOT.read_to_standard_da(d4_file, var)
 
                 era5 = GEO_PLOT.read_to_standard_da(era5_vertical_path, era5_var)
