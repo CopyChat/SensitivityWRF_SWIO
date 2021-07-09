@@ -1,5 +1,5 @@
 """
-functions used for get and plot geo data
+functions used for process and plot geo data
 hard linked with that in CODE/
 """
 
@@ -7,6 +7,8 @@ __version__ = f'Version 1.0  \nTime-stamp: <2019-02-21>'
 __author__ = "ChaoTANG@univ-reunion.fr"
 
 import os
+from typing import List
+import warnings
 import hydra
 from omegaconf import DictConfig
 import cftime
@@ -22,7 +24,17 @@ import cartopy.feature as cfeature
 from scipy import stats
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-DIR = f'/Users/ctang/Microsoft_OneDrive/OneDrive/CODE/'
+
+def my_coding_rules():
+    """
+
+    :return:
+    :rtype:
+    """
+
+    print(f'classification file in pd.DataFrame with DateTimeIndex')
+    print(f'geo-field in DataArray with good name and units')
+    print(f'see the function read_to_standard_da for the standard dim names')
 
 
 # -----------------------------
@@ -94,26 +106,41 @@ class ValidationGrid:
         return 1
 
 
-def convert_da_to_time_latitude_longitude(da: xr.DataArray) -> xr.DataArray:
-    """
+class CmipVarDir:
 
-    Parameters
-    ----------
-    da : input any da from netcdf file
+    def __init__(self, path: str):
+        self.path = path
 
-    Returns
-    -------
-    da with time latitude longitude
-    """
+    @property  # 用这个装饰器后这个方法调用就可以不加括号，即将其转化为属性
+    def nc_file(self):
+        return glob.glob(f'{self.path:s}/*.nc')
 
-    # option 1:
-    possible_lat = ['latitude', 'lat', 'rlat', 'xlat', 'x']
-    possible_lon = ['longitude', 'lon', 'rlon', 'xlon', 'y']
+    @property  # 用这个装饰器后这个方法调用就可以不加括号，即将其转化为属性
+    def gcm(self):
+        files = self.nc_file
+        gcm = list(set([s.split('_')[2] for s in files]))
+        gcm.sort()
+        # todo: when produce new file in the dir, the results would be different/wrong
+        return gcm
 
-    lat_0 = [x for x in possible_lat if x in da.dims][0]
-    lon_0 = [x for x in possible_lon if x in da.dims][0]
+    @property  # 用这个装饰器后这个方法调用就可以不加括号，即将其转化为属性
+    def ssp(self):
+        files = self.nc_file
+        ssp = list(set([s.split('_')[3] for s in files]))
+        return ssp
 
-    return da
+    @property  # 用这个装饰器后这个方法调用就可以不加括号，即将其转化为属性
+    def var(self):
+        files = self.nc_file
+        file_names = [s.split('/')[-1] for s in files]
+        var = list(set([s.split('_')[0] for s in file_names]))
+        return var
+
+    @property
+    def freq(self):
+        files = self.nc_file
+        freq = list(set([s.split('_')[1] for s in files]))
+        return freq
 
 
 def convert_multi_da_to_ds(list_da: list, list_var_name: list) -> xr.Dataset:
@@ -135,7 +162,7 @@ def convert_ds_to_da(ds: xr.Dataset, varname: str = 'varname') -> xr.DataArray:
     Parameters
     ----------
     ds : with each variable < 2D
-    varname: usually there are several varnames in the ds, as numbers of ensemble, for example.
+    varname: usually there are several var names in the ds, as numbers of ensemble, for example.
 
     Returns
     -------
@@ -192,16 +219,16 @@ def convert_da_to_360day_monthly(da: xr.DataArray) -> xr.DataArray:
     return val
 
 
-def find_two_bounds(min: float, max: float, n: int):
+def find_two_bounds(vmin: float, vmax: float, n: int):
     """
     find the vmin and vmax in 'n' interval
-    :param min:
-    :param max:
+    :param vmin:
+    :param vmax:
     :param n:
     :return:
     """
-    left = round(min / n, 0) * n
-    right = round(max / n, 0) * n
+    left = round(vmin / n, 0) * n
+    right = round(vmax / n, 0) * n
 
     return left, right
 
@@ -236,7 +263,7 @@ def query_data(cfg: DictConfig, mysql_query: str, remove_missing_data=True):
 
 
 @hydra.main(config_path="configs", config_name="config.ctang")
-def query_influxDB(cfg: DictConfig, query: str):
+def query_influxdb(cfg: DictConfig, query: str):
     """
     select data from DataBase
     :return: DataFrame
@@ -258,10 +285,13 @@ def query_influxDB(cfg: DictConfig, query: str):
     return df
 
 
+# noinspection PyUnresolvedReferences
 def plot_station_value(lon: pd.DataFrame, lat: pd.DataFrame, value: np.array, cbar_label: str,
                        fig_title: str, bias=False):
     """
     plot station locations and their values
+    :param bias:
+    :type bias:
     :param fig_title:
     :param cbar_label: label of color bar
     :param lon:
@@ -269,9 +299,6 @@ def plot_station_value(lon: pd.DataFrame, lat: pd.DataFrame, value: np.array, cb
     :param value:
     :return: map show
     """
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.pyplot as plt
     import matplotlib as mpl
 
     fig = plt.figure(dpi=220)
@@ -419,8 +446,6 @@ def convert_ttr_era5_2_olr(ttr: xr.DataArray, is_reanalysis: bool):
     # watts per square metre (W m-2), the accumulated values should be divided by the accumulation period
     # expressed in seconds. The ECMWF convention for vertical fluxes is positive downwards.
 
-    olr = None
-
     if is_reanalysis:
         factor = -3600
     else:
@@ -429,11 +454,60 @@ def convert_ttr_era5_2_olr(ttr: xr.DataArray, is_reanalysis: bool):
     if isinstance(ttr, xr.DataArray):
         # change the variable name and units
         olr = xr.DataArray(ttr.values / factor,
-                           coords=[ttr.time, ttr.latitude, ttr.longitude],
+                           coords=[ttr.time, ttr.lat, ttr.lon],
                            dims=ttr.dims, name='OLR', attrs={'units': 'W m**-2',
                                                              'long_name': 'OLR'})
 
     return olr
+
+
+def plot_class_occurrence_and_anomaly_time_series(classif: pd.DataFrame, anomaly: xr.DataArray):
+    """
+    as the title,
+    project: MIALHE_2020 (ttt class occurrence series with spatial mean seasonal anomaly)
+    :param classif:
+    :type classif:
+    :param anomaly:
+    :type anomaly:
+    :return:
+    :rtype:
+    """
+
+    fig = plt.figure(figsize=(12, 8), constrained_layout=False)
+    grid = fig.add_gridspec(2, 1, wspace=0, hspace=0)
+    ax = fig.add_subplot(grid[0, 0])
+
+    print(f'anomaly series')
+
+    start = anomaly.index.year.min()
+    end = anomaly.index.year.max()
+
+    anomaly = anomaly.squeeze()
+
+    ax.plot(range(start, end + 1), anomaly, marker='o')
+    ax.set_ylim(-20, 20)
+
+    ax.set_xticklabels(classif['year'])
+
+    class_name = list(set(classif['class']))
+    for i in range(len(class_name)):
+        event = classif[classif['class'] == class_name[i]]['occurrence']
+        cor = np.corrcoef(anomaly, event)[1, 0]
+
+        ax.text(0.5, 0.95 - i * 0.08,
+                f'cor with #{class_name[i]:g} = {cor:4.2f}', fontsize=12,
+                horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+
+    print(f'bar plot')
+    fig.add_subplot(grid[-1, 0])
+    import seaborn as sns
+    sns.set(style="whitegrid")
+    sns.barplot(x='year', y="occurrence", hue=f'class', data=classif)
+
+    fig.suptitle(f'reu spatial mean ssr anomaly and olr regimes number each season')
+
+    plt.savefig('./plot/anomaly_seris_olr_regimes.png', dpi=300)
+    plt.show()
 
 
 def multi_year_daily_mean(var: xr.DataArray):
@@ -454,9 +528,14 @@ def anomaly_daily(da: xr.DataArray) -> xr.DataArray:
     :param da:
     :return:
     """
-    anomaly = da.groupby(da.time.dt.dayofyear) - da.groupby(da.time.dt.dayofyear).mean("time")
+
+    print(f'daily anomaly ...')
+
+    anomaly = da.groupby(da.time.dt.strftime('%m-%d')) - da.groupby(da.time.dt.strftime('%m-%d')).mean('time')
 
     return_anomaly = anomaly.assign_attrs({'units': da.assign_attrs().units, 'long_name': da.assign_attrs().long_name})
+
+    return_anomaly.rename(da.name)
 
     return return_anomaly
 
@@ -464,14 +543,22 @@ def anomaly_daily(da: xr.DataArray) -> xr.DataArray:
 def anomaly_hourly(da: xr.DataArray) -> xr.DataArray:
     """
     calculate hourly anomaly, as the name, from the xr.DataArray
+    if the number of year is less than 30, better to smooth out the high frequency variance.
     :param da:
     :return:
     """
 
-    da = da.assign_coords(year_month_day_hour=da.time.dt.strftime("%Y-%m-%d-%H"))
-    anomaly = da.groupby("year_month_day_hour") - da.groupby("year_month_day_hour").mean("time")
+    if len(set(da.time.dt.year.values)) < 30:
+        warnings.warn('CTANG: input less than 30 years ... better to smooth out the high frequency variance, '
+                      'for more see project Mialhe_2020/src/anomaly.py')
+
+    print('calculating hourly anomaly ... ')
+
+    anomaly = da.groupby(da.time.dt.strftime('%m-%d-%H')) - da.groupby(da.time.dt.strftime('%m-%d-%H')).mean('time')
 
     return_anomaly = anomaly.assign_attrs({'units': da.assign_attrs().units, 'long_name': da.assign_attrs().long_name})
+
+    return_anomaly.rename(da.name)
 
     return return_anomaly
 
@@ -504,11 +591,11 @@ def plot_geo_subplot_map(geomap, vmin, vmax, bias, ax, domain: str, tag: str, st
     # vmin = geomap.min()
     cmap, norm = set_cbar(vmax=vmax, vmin=vmin, n_cbar=20, bias=bias)
 
-    cf: object = ax.contourf(geomap.longitude, geomap.latitude, geomap, levels=norm.boundaries,
+    cf: object = ax.contourf(geomap.lon, geomap.lat, geomap, levels=norm.boundaries,
                              cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), extend='both')
 
     cbar_label = f'{geomap.name:s} ({geomap.assign_attrs().units:s})'
-    cb = plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, label=cbar_label)
+    plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, label=cbar_label)
 
     ax.text(0.9, 0.95, f'{tag:s}', fontsize=12,
             horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
@@ -518,52 +605,488 @@ def plot_geo_subplot_map(geomap, vmin, vmax, bias, ax, domain: str, tag: str, st
                 horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
 
 
-def plot_ttt_regimes(ttt_regimes: pd.DataFrame, olr: xr.DataArray, month: str,
+def get_data_in_classif(da: xr.DataArray, df: pd.DataFrame, significant: bool = 0, time_mean: bool = 0):
+    """
+    to get a new da with additional dim of classification df
+    :param time_mean:
+    :type time_mean:
+    :param significant:
+    :type significant:
+    :param da: with DataTimeIndex
+    :type da:
+    :param df: class with DataTimeIndex
+    :type df:
+    :return: in shape of (:,:,n_class)
+    :rtype: da with additional dim named with class number
+    """
+
+    # get info:
+    class_column_name = df.columns[0]
+    class_names = np.sort(list(set(df[class_column_name])))
+
+    print(f'get data in class...')
+
+    for i in range(len(class_names)):
+        cls = class_names[i]
+        date_class_one: pd.DatetimeIndex = df.loc[df[class_column_name] == cls].index
+        if len(date_class_one) < 1:
+            print(f'Sorry, I got 0 day in phase = {cls:g}')
+            break
+        class_1: xr.DataArray = \
+            da.where(da.time.dt.strftime('%Y-%m-%d').isin(date_class_one.strftime('%Y-%m-%d')), drop=True)
+
+        if significant:
+            sig_map = value_significant_of_anomaly_2d_mask(field_3d=class_1)
+            class_1 = filter_2d_by_mask(class_1, mask=sig_map)
+
+        if i == 0:
+            data_in_class = class_1
+        else:
+            data_in_class = xr.concat([data_in_class, class_1], dim='class')
+
+        print(f'class = {cls:g}', data_in_class.shape)
+
+    # output:
+    if time_mean:
+        data_in_class = data_in_class.mean('time')
+
+    output_da = data_in_class.assign_coords({'class': class_names}).rename(da.name).assign_attrs(
+        {'units': da.attrs['units']}).transpose(..., 'class')
+
+    return output_da
+
+
+def convert_unit_era5_flux(flux: xr.DataArray, is_ensemble: bool = 0):
+    """
+    convert to W/m2
+    :param is_ensemble:
+    :type is_ensemble:
+    :param flux:
+    :type flux:
+    :return:
+    :rtype:
+    """
+
+    # ----------------------------- attention -----------------------------
+    # For the reanalysis, the accumulation period is over the 1 hour
+    # ending at the validity date and time. For the ensemble members,
+    # ensemble mean and ensemble spread, the accumulation period is
+    # over the 3 hours ending at the validity date and time. The units are
+    # joules per square metre (J m-2 ). To convert to watts per square metre (W m-2 ),
+    # the accumulated values should be divided by the accumulation period
+    # expressed in seconds. The ECMWF convention for vertical fluxes is
+    # positive downwards.
+
+    print(f'convert flux unit to W/m**2 ...')
+    if is_ensemble:
+        factor = 3600 * 3
+    else:
+        factor = 3600 * 1
+
+    da = flux / factor
+
+    da = da.rename(flux.name).assign_attrs({'units': 'W/m**2',
+                                            'long_name': flux.assign_attrs().long_name})
+
+    return da
+
+
+def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArray,
+                                        area: str, vmax, vmin,
+                                        bias: bool = True,
+                                        plot_wind: bool = 0,
+                                        only_significant_points: bool = 0,
+                                        suptitle_add_word: str = ''):
+
+    """
+    diurnal field in classification, data are processed before input to this question
+    :param classif:
+    :type classif:
+    :param field:
+    :type field:
+    :param area:
+    :type area:
+    :param vmax:
+    :type vmax:
+    :param vmin:
+    :type vmin:
+    :param bias:
+    :type bias:
+    :param plot_wind:
+    :type plot_wind:
+    :param only_significant_points:
+    :type only_significant_points:
+    :param suptitle_add_word:
+    :type suptitle_add_word:
+    :return:
+    :rtype:
+    """
+
+    # ----------------------------- data -----------------------------
+    data_in_class = get_data_in_classif(da=field, df=classif, time_mean=False,
+                                        significant=only_significant_points)
+    print(f'good')
+    # ----------------------------- get definitions -----------------------------
+    class_names = list(set(classif.values.ravel()))
+    n_class = len(class_names)
+
+    hours = list(set(field.time.dt.hour.data))
+    n_hour = len(hours)
+
+    class_column_name = classif.columns.to_list()[0]
+
+    fig, axs = plt.subplots(nrows=n_class, ncols=n_hour, sharex='row', sharey='col',
+                            figsize=(19, 10), dpi=300, subplot_kw={'projection': ccrs.PlateCarree()})
+    fig.subplots_adjust(left=0.1, right=0.85, bottom=0.02, top=0.9, wspace=0.09, hspace=0.01)
+
+    for cls in range(n_class):
+        print(f'plot class = {cls + 1:g}')
+
+        in_class = data_in_class.where(data_in_class['class'] == class_names[cls], drop=True).squeeze()
+        hourly_mean = in_class.groupby(in_class.time.dt.hour).mean(keep_attrs=True)
+
+        for hour in range(n_hour):
+
+            plt.sca(axs[cls, hour])
+            ax = axs[cls, hour]
+
+            plot_geo_subplot_map(geomap=hourly_mean.sel(hour=hours[hour]),
+                                 vmax=vmax, vmin=vmin, bias=bias,
+                                 ax=ax, domain=area, tag=f'local time {hours[hour]:g}')
+
+            # ax.text(0.02, 0.95, f'phase {cls+1:g}', fontsize=8,
+            #         horizontalalignment='left', verticalalignment='top', transform=ax.transAxes)
+            # ax.text(0.95, 0.95, f'{season_tag:s}', fontsize=8,
+            #         horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+            # ax.text(0.01, 0.15, f'{filtering:s}', fontsize=8,
+            #         horizontalalignment='left', verticalalignment='top', transform=ax.transAxes)
+            #
+            # if cls == 0:
+            #     ax.set_title(f'{hour + 4:g}H00')
+            # if h == 0:
+            #     ax.set_ylabel(f'Class_{cls + 1:g}')
+            #     plt.ylabel(f'Class {cls + 1:g}')
+
+            # ----------------------------- surface wind -----------------------------
+    if plot_wind:
+        print(f'plot surface wind ...')
+
+        print(f'loading data ... ')
+        warnings.warn('CTANG: load data from 1999-2016, make sure that the data period is correct,'
+                      ' check and check it again')
+
+        local_data = '/Users/ctang/local_data/era5'
+        u = read_to_standard_da(f'{local_data:s}/u10/u10.hourly.1999-2016.swio.day.nc', 'u10')
+        v = read_to_standard_da(f'{local_data:s}/v10/v10.hourly.1999-2016.swio.day.nc', 'v10')
+
+        u = anomaly_hourly(u)
+        v = anomaly_hourly(v)
+
+        u_in_class = get_data_in_classif(u, classif, significant=False, time_mean=False)
+        v_in_class = get_data_in_classif(v, classif, significant=False, time_mean=False)
+
+        for cls in range(n_class):
+            print(f'plot class = {cls + 1:g}')
+
+            u_in_1class = u_in_class.where(u_in_class['class'] == class_names[cls], drop=True).squeeze()
+            v_in_1class = v_in_class.where(v_in_class['class'] == class_names[cls], drop=True).squeeze()
+            u_hourly_mean = u_in_class.groupby(u_in_class.time.dt.hour).mean()
+            v_hourly_mean = v_in_class.groupby(v_in_class.time.dt.hour).mean()
+
+            for hour in range(n_hour):
+                plt.sca(axs[cls, hour])
+                ax = axs[cls, hour]
+
+                u_1hour = u_hourly_mean.sel(hour=hours[hour])
+                v_1hour = v_hourly_mean.sel(hour=hours[hour])
+
+
+                # speed = np.sqrt(u10 ** 2 + v10 ** 2)
+                # speed = speed.rename('10m_wind_speed').assign_coords({'units': u10.attrs['units']})
+
+                # Set up parameters for quiver plot. The slices below are used to subset the data (here
+                # taking every 4th point in x and y). The quiver_kwargs are parameters to control the
+                # appearance of the quiver so that they stay consistent between the calls.
+
+                if area == 'bigreu':
+                    n_sclice = None
+                    headlength = 5
+                    headwidth = 8
+
+                    if bias == 0:
+                        n_scale = 3
+                        key = 10
+                    else:
+                        n_scale = 3
+                        key = 0.5
+
+                if area == 'SA_swio':
+                    headlength = 5
+                    headwidth = 3
+                    n_sclice = 8
+
+                    if bias == 0:
+                        n_scale = 3
+                        key = 10
+                    else:
+                        n_scale = 0.3
+                        key = 1
+
+                quiver_slices = slice(None, None, n_sclice)
+                quiver_kwargs = {'headlength': headlength,
+                                 'headwidth': headwidth,
+                                 'angles': 'uv', 'units': 'xy',
+                                 'scale': n_scale}
+                # a smaller scale parameter makes the arrow longer.
+
+                # plot in subplot:
+                circulation = ax.quiver(u_1hour.lon.values[quiver_slices],
+                                            u_1hour.lat.values[quiver_slices],
+                                            u_1hour.values[quiver_slices, quiver_slices],
+                                            v_1hour.values[quiver_slices, quiver_slices],
+                                            color='blue', zorder=2, **quiver_kwargs)
+
+                ax.quiverkey(circulation, 0.08, 0.90, key, f'{key:g}' + r'$ {m}/{s}$',
+                                 labelpos='E',
+                                 coordinates='axes')
+
+                # ----------------------------- end of plot -----------------------------
+    suptitle_add_word += ' (surface wind)'
+
+    title = f'{field.assign_attrs().long_name:s} in class'
+
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    fig.suptitle(title)
+
+    # ----------------------------- end of plot -----------------------------
+
+    # cbar_label = f'{var:s} ({field.assign_attrs().units:s})'
+    # cb_ax = fig.add_axes([0.87, 0.2, 0.01, 0.7])
+    # cb = plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, cax=cb_ax, label=cbar_label)
+    #
+    # title = field.assign_attrs().long_name.replace(" ", "_") + f'_anomaly'
+    # plt.suptitle(title + f'in MJO phase\n(hourly data - multiyear hourly mean)')
+    #
+    # plt.savefig(f'{WORKING_DIR:s}/plot/hourly_mean.{var:s}.{statistic:s}.in_{season:s}.{area:s}.'
+    #             f'sig_{only_significant_points:g}.filter_{filter:g}.mjo_phase.png', dpi=200)
+    plt.show()
+    print(f'got plot ')
+
+
+def plot_field_in_classif(field: xr.DataArray, classif: pd.DataFrame,
+                          area: str, vmax, vmin,
+                          bias: bool = 1,
+                          plot_wind: bool = 0,
+                          only_significant_points: bool = 0,
+                          suptitle_add_word: str = ''):
+    """
+    to plot field in class.
+    :type only_significant_points: object
+    :param only_significant_points:
+    :type only_significant_points: object
+    :param field:
+    :type field: xarray.core.dataarray.DataArray
+    :param classif:
+    :type classif: pandas.core.frame.DataFrame
+    :param area:
+    :type area: str
+    :param vmax:
+    :type vmax: int
+    :param vmin:
+    :type vmin: int
+    :param plot_wind:
+    :type plot_wind: int
+    :param bias:
+    :type bias: int
+    :param suptitle_add_word:
+    :type suptitle_add_word:
+    :return:
+    :rtype: None
+    """
+
+    # ----------------------------- data -----------------------------
+    class_mean = get_data_in_classif(da=field, df=classif,
+                                     time_mean=True,
+                                     significant=only_significant_points)
+    print(f'good')
+
+    # ----------------------------- plot -----------------------------
+
+    fig, axs = plt.subplots(nrows=4, ncols=2, sharex='row', sharey='col',
+                            figsize=(12, 15), dpi=220, subplot_kw={'projection': ccrs.PlateCarree()})
+    fig.subplots_adjust(left=0.1, right=0.85, bottom=0.12, top=0.9, wspace=0.09, hspace=0.01)
+    # axs = axs.flatten()
+    axs = axs.ravel()
+
+    for c in range(len(class_mean['class'])):
+        cls = class_mean['class'].values[c]
+        print(f'plot in class {cls:g} ...')
+
+        ax = set_active_axis(axs=axs, n=c)
+        set_basemap(area=area, ax=ax)
+
+        plt.title('#' + str(int(cls)), fontsize=14, pad=3)
+
+        cmap, norm = set_cbar(vmax=vmax, vmin=vmin, n_cbar=20, bias=bias)
+
+        cf = plt.contourf(field.lon, field.lat, class_mean[:, :, c], levels=norm.boundaries,
+                          cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), extend='both')
+
+    # ----------------------------- end of plot -----------------------------
+    cb_ax = fig.add_axes([0.13, 0.1, 0.7, 0.015])
+    cbar_label = f'{field.assign_attrs().long_name:s} ({field.assign_attrs().units:s})'
+    plt.colorbar(cf, orientation='horizontal', shrink=0.7, pad=0.05, label=cbar_label, cax=cb_ax)
+
+    # ----------------------------- surface wind -----------------------------
+    if plot_wind:
+        print(f'plot surface wind ...')
+
+        print(f'loading data ... ')
+
+        local_data = '/Users/ctang/local_data/era5'
+        u = read_to_standard_da(f'{local_data:s}/u10/u10.hourly.1999-2016.swio.day.nc', 'u10')
+        v = read_to_standard_da(f'{local_data:s}/v10/v10.hourly.1999-2016.swio.day.nc', 'v10')
+
+        u = anomaly_daily(u)
+        v = anomaly_daily(v)
+
+        u = get_data_in_classif(u, classif, significant=False, time_mean=True)
+        v = get_data_in_classif(v, classif, significant=False, time_mean=True)
+
+        # speed = np.sqrt(u10 ** 2 + v10 ** 2)
+        # speed = speed.rename('10m_wind_speed').assign_coords({'units': u10.attrs['units']})
+
+        # Set up parameters for quiver plot. The slices below are used to subset the data (here
+        # taking every 4th point in x and y). The quiver_kwargs are parameters to control the
+        # appearance of the quiver so that they stay consistent between the calls.
+
+        if area == 'bigreu':
+            n_sclice = None
+            headlength = 5
+            headwidth = 8
+
+            if bias == 0:
+                n_scale = 3
+                key = 10
+            else:
+                n_scale = 3
+                key = 0.5
+
+        if area == 'SA_swio':
+            headlength = 5
+            headwidth = 3
+            n_sclice = 8
+
+            if bias == 0:
+                n_scale = 3
+                key = 10
+            else:
+                n_scale = 0.3
+                key = 1
+
+        quiver_slices = slice(None, None, n_sclice)
+        quiver_kwargs = {'headlength': headlength,
+                         'headwidth': headwidth,
+                         'angles': 'uv', 'units': 'xy',
+                         'scale': n_scale}
+        # a smaller scale parameter makes the arrow longer.
+
+        # plot in subplot:
+        for c in range(len(class_mean['class'])):
+            cls = class_mean['class'].values[c]
+            print(f'plot wind in class {cls:g} ...')
+
+            ax = set_active_axis(axs=axs, n=c)
+
+            u_1 = u[:, :, c]
+            v_1 = v[:, :, c]
+
+            circulation = ax.quiver(u_1.lon.values[quiver_slices],
+                                    u_1.lat.values[quiver_slices],
+                                    u_1.values[quiver_slices, quiver_slices],
+                                    v_1.values[quiver_slices, quiver_slices],
+                                    color='blue', zorder=2, **quiver_kwargs)
+
+            ax.quiverkey(circulation, 0.08, 0.90, key, f'{key:g}' + r'$ {m}/{s}$',
+                         labelpos='E',
+                         coordinates='axes')
+
+        # ----------------------------- end of plot -----------------------------
+        suptitle_add_word += ' (surface wind)'
+
+    title = f'{field.assign_attrs().long_name:s} in class'
+
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    fig.suptitle(title)
+    plt.savefig(f'plot/{field.name:s}_{area:s}_sig{only_significant_points:g}_wind{plot_wind:g}_classif.png', dpi=220)
+    plt.show()
+    print(f'got plot')
+
+
+def plot_ttt_regimes(olr_regimes: pd.DataFrame, olr: xr.DataArray,
                      only_significant_points: int = 0):
     """
-    plot mjo phase by olr
+    plot ttt phase by olr
     :param only_significant_points:
-    :param month:
-    :param ttt_regimes:
+    :param olr_regimes:
     :param olr:
     :return:
     """
     # ----------------------------- use the regime in sarah-e period -----------------------------
+
     year_min = olr.indexes['time'].year.min()
     year_max = olr.indexes['time'].year.max()
-    ttt_regimes = ttt_regimes[np.logical_and(ttt_regimes.index.year > year_min - 1,
-                                             ttt_regimes.index.year < year_max + 1)]
+    olr_regimes = olr_regimes[np.logical_and(
+        olr_regimes.index.year > year_min - 1,
+        olr_regimes.index.year < year_max + 1)]
 
-    # ----------------------------- filtering data by season -----------------------------
-    olr = filter_xr_by_month(data=olr, month=month)
-    olr_daily_anomaly = anomaly_daily(olr)
+    month = 'NDJF'
 
-    olr_daily_anomaly.to_netcdf(f'./ttt.anomaly.test.nc')
+    print(f'anomaly ...')
+
+    olr_anomaly = olr.groupby(olr.time.dt.strftime('%m-%d')) - \
+                  olr.groupby(olr.time.dt.strftime('%m-%d')).mean('time')
+
+    olr_anomaly = olr_anomaly.assign_attrs(
+        {'units': olr.assign_attrs().units, 'long_name': olr.assign_attrs().long_name})
+
+    # the regime is defined by ERA5 ensemble data (B. P.),  but for 18h UTC
+    # shift time by +1 day to match ensemble data timestamp
+    olr_anomaly = convert_da_shifttime(olr_anomaly, second=-3600 * 18)
+    olr = convert_da_shifttime(olr, second=-3600 * 18)
 
     # ----------------------------- fig config -----------------------------
     fig, axs = plt.subplots(nrows=4, ncols=2, sharex='row', sharey='col',
                             figsize=(8, 10), dpi=220, subplot_kw={'projection': ccrs.PlateCarree()})
     fig.subplots_adjust(left=0.1, right=0.85, bottom=0.12, top=0.9, wspace=0.1, hspace=0.1)
-    # axs = axs.flatten()
     axs = axs.ravel()
 
     for regime in [1, 2, 3, 4, 5, 6, 7]:
         print(f'plot regime = {regime:g}')
         # ----------------------------- calculate mean in each phase -----------------------------
-        date_phase_one: pd.DatetimeIndex = ttt_regimes.loc[ttt_regimes['regime'] == regime].index
+        date_phase_one: pd.DatetimeIndex = olr_regimes.loc[olr_regimes['class'] == regime].index
         if len(date_phase_one) < 1:
             print(f'Sorry, I got 0 day in phase = {regime:g}')
-            print(ttt_regimes)
+            print(olr_regimes)
             break
-        anomaly_olr_1phase: xr.DataArray = olr_daily_anomaly.sel(time=date_phase_one)  # filter
+
+        anomaly_olr_1phase: xr.DataArray = olr_anomaly.sel(time=date_phase_one)  # filter
         # if there's a error: check
         # 1) if data_phase_one is empty
         # 2) if the Time is 00:00:00
         olr_1phase: xr.DataArray = olr.sel(time=date_phase_one)  # filter
 
-        nday = anomaly_olr_1phase.shape[0]
+        # nday = anomaly_olr_1phase.shape[0]
         anomaly_mean: xr.DataArray = anomaly_olr_1phase.mean(axis=0)
         olr_mean = olr_1phase.mean(axis=0)
+
+        # anomaly_ccub = sio.loadmat('./src/regime_maps.mat')['regimes_maps']
+        # if not (anomaly_mean - anomaly_ccub[:, :, regime - 1]).max():
+        #     print('the same')
 
         if only_significant_points:
             sig_map: xr.DataArray = value_mjo_significant_map(phase=regime, grid=anomaly_mean, month=month)
@@ -571,17 +1094,16 @@ def plot_ttt_regimes(ttt_regimes: pd.DataFrame, olr: xr.DataArray, month: str,
             anomaly_mean = filter_2d_by_mask(anomaly_mean, mask=sig_map)
 
         ax = set_active_axis(axs=axs, n=regime - 1)
-        set_basemap(area='swio', ax=ax)
-        # set_basemap(area='SA_swio', ax=ax)
+        set_basemap(area='SA_swio', ax=ax)
 
         # ----------------------------- start to plot -----------------------------
         plt.title('#' + str(regime) + '/' + str(7), pad=3)
 
-        vmax = 10
-        vmin = -10
+        vmax = 70
+        vmin = -70
 
-        lon, lat = np.meshgrid(anomaly_mean.longitude, anomaly_mean.latitude)
-        level_anomaly = np.arange(vmin, vmax + 1, 1)
+        lon, lat = np.meshgrid(anomaly_mean.lon, anomaly_mean.lat)
+        level_anomaly = np.arange(vmin, vmax + 1, 10)
         cf1 = plt.contourf(lon, lat, anomaly_mean, level_anomaly, cmap='PuOr_r', vmax=vmax, vmin=vmin)
         level_olr = np.arange(140, 280, 20)
         cf2 = plt.contour(lon, lat, olr_mean, level_olr, cmap='magma_r', vmax=280, vmin=140)
@@ -596,7 +1118,7 @@ def plot_ttt_regimes(ttt_regimes: pd.DataFrame, olr: xr.DataArray, month: str,
         ax.text(0.9, 0.95, f'{month:s}', fontsize=12,
                 horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
 
-        ax.text(0.8, 0.1, f'{olr.name:s}', fontsize=12,
+        ax.text(0.8, 0.1, f'{olr_anomaly.name:s}', fontsize=12,
                 horizontalalignment='left', verticalalignment='top', transform=ax.transAxes)
 
         test = 1
@@ -605,20 +1127,271 @@ def plot_ttt_regimes(ttt_regimes: pd.DataFrame, olr: xr.DataArray, month: str,
             file = f'./ttt.regime.{regime}.nc'
             anomaly_mean.to_netcdf(file)
 
-    cbar_label = f'OLR ({olr.assign_attrs().units:s})'
+    cbar_label = f'OLR ({olr_anomaly.assign_attrs().units:s})'
     plt.colorbar(cf1, ticks=np.ndarray.tolist(level_anomaly), label=cbar_label, ax=axs)
 
-    title = f'ttt regimes in {month:s}'
+    title = f'olr regimes'
     plt.suptitle(title)
 
     # tag: specify the location of the cbar
     # cb_ax = fig.add_axes([0.13, 0.1, 0.7, 0.015])
     # cb = plt.colorbar(cf1, orientation='horizontal', shrink=0.7, pad=0.05, label=cbar_label, cax=cb_ax)
 
-    plt.savefig(f'./ttt_regimes_sig_{only_significant_points:g}.png', dpi=220)
+    plt.savefig(f'./plot/ttt_regimes_sig_{only_significant_points:g}.png', dpi=220)
 
     plt.show()
     print(f'got plot')
+
+
+def plot_color_matrix(df: pd.DataFrame, ax, cbar_label: str, plot_number: bool = False):
+    """
+    plot matrix by df, where x is column, y is index,
+    :param plot_number:
+    :type plot_number:
+    :param cbar_label:
+    :type cbar_label: str
+    :param df:
+    :type df:
+    :param ax:
+    :type ax:
+    :return:
+    :rtype: ax
+    """
+
+    import math
+
+    c = ax.pcolor(df, cmap=plt.cm.get_cmap('Blues', df.max().max() + 1))
+
+    x_ticks_label = df.columns
+    y_ticks_label = df.index
+
+    # put the major ticks at the middle of each cell
+    x_ticks = np.arange(df.shape[1]) + 0.5
+    y_ticks = np.arange(df.shape[0]) + 0.5
+    ax.set_xticks(x_ticks, minor=False)
+    ax.set_yticks(y_ticks, minor=False)
+
+    ax.set_xticklabels(x_ticks_label, minor=False)
+    ax.set_yticklabels(y_ticks_label, minor=False)
+
+    ax.tick_params(bottom=True, top=True, left=True, right=True)
+    ax.tick_params(labelbottom=True, labeltop=True, labelleft=True, labelright=False)
+
+    # ax.set_ylabel('year')
+    # ax.set_xlabel('month')
+
+    vmin = int(df.values.min())
+    vmax = int(df.values.max())
+
+    # print(vmin, vmax)
+
+    if vmin + vmax < vmax:
+        c = ax.pcolor(df, cmap=plt.cm.get_cmap('coolwarm', df.max().max() + 1))
+        cbar_ticks = [x for x in range(vmin, vmax + 1, math.ceil((vmax - vmin) / 10))]
+    else:
+        cbar_ticks = [x for x in range(vmin, vmax, math.ceil((vmax - vmin) / 10))]
+
+    if plot_number:
+        for i in range(df.shape[1]):  # x direction
+            for j in range(df.shape[0]):  # y direction
+                c = df.iloc[j, i]
+                # notice to the order of
+                ax.text(x_ticks[i], y_ticks[j], f'{c:2.0f}', va='center', ha='center')
+        # put cbar label
+        ax.yaxis.set_label_position("right")
+        ax.set_ylabel(cbar_label)
+    else:
+        cb = plt.colorbar(c, ax=ax, label=cbar_label, ticks=cbar_ticks)
+        loc = [x + 0.5 for x in cbar_ticks]
+        cb.set_ticks(loc)
+        cb.set_ticklabels(cbar_ticks)
+
+    return ax
+
+
+def find_symmetric_difference(list1, list2):
+    """
+    show difference
+    :param list1:
+    :type list1:
+    :param list2:
+    :type list2:
+    :return:
+    :rtype:
+    """
+
+    difference = set(list1).symmetric_difference(set(list2))
+    list_difference = list(difference)
+
+    return list_difference
+
+
+def plot_matrix_class_vs_class(class_x: pd.DataFrame,
+                               class_y: pd.DataFrame,
+                               output_plot: str = 'class_vs_class_matrix',
+                               occurrence: bool = 1,
+                               suptitle_add_word: str = ""):
+    """
+    plot the matrix of class vs class, color bar is number of points
+    class_df: DataFrame of one columns of classifications with DateTimeIndex, columns' names will be used.
+    $$: if plot occurrence, impact of class_x on class_y
+
+    :param class_y:
+    :type class_y: pandas.core.frame.DataFrame
+    :param class_x:
+    :type class_x: pandas.core.frame.DataFrame
+    :param output_plot:
+    :type output_plot: str
+    :param occurrence: if occurrence is True, will plot numbers in the matrix by default
+    :type occurrence:
+    :param suptitle_add_word:
+    :type suptitle_add_word: str
+    :return:
+    :rtype: None
+    """
+
+    # the input DataFrames may have different index, so merge two classes with DataTimeIndex:
+    class_df = class_x.merge(class_y, left_index=True, right_index=True)
+
+    # y direction:
+    name_y = class_df.columns[0]
+    # x direction:
+    name_x = class_df.columns[1]
+
+    class_name_y = list(set(class_df.iloc[:, 0]))
+    class_name_x = list(set(class_df.iloc[:, 1]))
+
+    # get cross matrix
+    cross = np.zeros((len(class_name_y), len(class_name_x)))
+    for i in range(len(class_name_y)):
+        class_one = class_df.loc[class_df[name_y] == class_name_y[i]]
+        for j in range(len(class_name_x)):
+            class_cross = class_one.loc[class_one[name_x] == class_name_x[j]]
+            cross[i, j] = len(class_cross)
+    cross_df = pd.DataFrame(data=cross, index=class_name_y, columns=class_name_x).astype(int)
+
+    # ----------------------------- plot -----------------------------
+    fig = plt.figure()
+    widths = [1, 3]
+    heights = [1, 2]
+    gridspec = fig.add_gridspec(ncols=2, nrows=2, width_ratios=widths, height_ratios=heights)
+    gridspec.update(wspace=0.1, hspace=0.2)  # set the spacing between axes.
+
+    # matrix:
+    ax = fig.add_subplot(gridspec[1, 1])
+    cbar_label = 'count'
+    plot_number = False
+
+    if occurrence:
+        print(f'occurrence: {name_y:s} introduced changes of {name_x:s} occurrence')
+        occ = cross_df
+        for i in range(len(class_name_x)):
+            ssr_class = class_name_x[i]
+            avg_freq = len(class_df[class_df[name_x] == ssr_class]) / len(class_df)
+            print(len(class_df[class_df[name_x] == ssr_class]), len(class_df), avg_freq)
+
+            for j in range(len(class_name_y)):
+                large_class = class_name_y[j]
+                freq = cross[j, i] / len(class_df[class_df[name_y] == large_class])
+                occ.iloc[j, i] = (freq - avg_freq) * 100
+                print(i, j, cross_df.iloc[j, i], len(class_df[class_df[name_y] == large_class]), freq)
+
+        plot_number = True  # it's better to plot number with occurrence
+
+        cross_df = occ
+
+        cbar_label = 'occurrence (%)'
+
+    plot_color_matrix(df=cross_df, ax=ax, cbar_label=cbar_label, plot_number=plot_number)
+
+    ax.set_xlabel(name_x)
+
+    # histogram in x direction:
+    ax = fig.add_subplot(gridspec[0, 1])
+    bars = class_name_x
+    data = class_df[name_x]
+    height = [len(data[data == x]) for x in class_name_x]
+
+    y_pos = np.arange(len(bars))
+    ax.bar(bars, height, align='center', color='red')
+
+    ax.set_xlim(0.5, y_pos[-1] + 1.5)  # these limit is from test
+    # x_ticks = np.arange(len(class_name_x)) + 0.5
+
+    ax.set_xticks([], minor=False)
+
+    ax.set_xticklabels([], minor=False)
+    ax.set_ylabel('n_day')
+    # ax.set_xlabel(name_x)
+
+    # histogram in y direction:
+    ax = fig.add_subplot(gridspec[1, 0])
+    bars = class_name_y
+    data = class_df[name_y]
+    height = [len(data[data == x]) for x in class_name_y]
+
+    y_pos = np.arange(len(bars))
+    ax.barh(bars, height, align='center', color='orange')
+
+    ax.set_ylim(0.5, y_pos[-1] + 1.5)
+    # these limit is from test
+    ax.invert_xaxis()
+    ax.set_xlabel('n_day')
+    ax.set_ylabel(name_y)
+
+    # end of plotting:
+    title = f'{name_x:s} vs {name_y:s}'
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    fig.suptitle(title)
+
+    plt.savefig(output_plot, dpi=300)
+
+    plt.show()
+
+    print(f'job done')
+
+
+def plot_matrix_classification_at_year_and_month(class_df: pd.DataFrame, output_plot: str):
+    """
+    calculate classification at different month
+    class_df: DataFrame of one class with DateTimeIndex
+    """
+
+    # get info from input:
+    n_class = int(class_df.max())
+
+    year_start = class_df.index.year.min()
+    year_end = class_df.index.year.max()
+    n_year = year_end - year_start + 1
+
+    month_list = list(set(class_df.index.month))
+
+    for i in range(n_class):
+        class_1 = class_df.loc[class_df.values == i + 1]
+        cross = np.zeros((n_year, len(month_list)))
+
+        for y in range(n_year):
+            for im in range(len(month_list)):
+                cross[y, im] = class_1.loc[
+                    (class_1.index.year == y + year_start) &
+                    (class_1.index.month == month_list[im])].__len__()
+
+        print(f'# ----------------- {n_class:g} -> {i + 1:g} -----------------------------')
+
+        df = pd.DataFrame(data=cross, index=range(year_start, year_start + n_year), columns=month_list)
+        df = df.astype(int)
+
+        fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(9, 6), facecolor='w', edgecolor='k', dpi=300)
+
+        plot_color_matrix(df=df, ax=ax, cbar_label='count')
+
+        plt.suptitle(f'C{n_class:g} -> C{i + 1:g}')
+        plt.savefig(f'./plot/{output_plot:s}', dpi=220)
+        plt.show()
+
+    print(f'job done')
 
 
 def plot_12months_geo_map_significant(da: xr.DataArray, area: str, sig_dim: str, only_sig_point: bool):
@@ -626,6 +1399,8 @@ def plot_12months_geo_map_significant(da: xr.DataArray, area: str, sig_dim: str,
                             figsize=(14, 12), dpi=220, subplot_kw={'projection': ccrs.PlateCarree()})
     fig.subplots_adjust(left=0.1, right=0.85, bottom=0.12, top=0.9, wspace=0.1, hspace=0.1)
     axs = axs.ravel()
+
+    print(sig_dim)
 
     for imon in range(12):
         print(f'plot month = {imon + 1:g}')
@@ -649,8 +1424,8 @@ def plot_12months_geo_map_significant(da: xr.DataArray, area: str, sig_dim: str,
         vmax, vmin = value_cbar_max_min_of_da(month_to_plot)
 
         # TODO:
-        vmax = 20
-        vmin = -20
+        # vmax = 20
+        # vmin = -20
         level_anomaly = np.arange(vmin, vmax + 1, 2)
 
         cf1 = plt.contourf(lon, lat, month_to_plot, level_anomaly, cmap='PuOr_r', vmax=vmax, vmin=vmin)
@@ -668,8 +1443,6 @@ def plot_12months_geo_map_significant(da: xr.DataArray, area: str, sig_dim: str,
 
     return fig, axs
 
-
-# -----------------------------
 
 def select_area_from_str(da: xr.DataArray, area: str):
     lonlat = value_lonlatbox_from_area(area)
@@ -725,7 +1498,7 @@ def plot_mjo_phase(mjo_phase: pd.DataFrame, olr: xr.DataArray, high_amplitude: b
         # 2) if the Time is 00:00:00
         olr_1phase: xr.DataArray = olr.sel(time=date_phase_one)  # filter
 
-        nday = anomaly_olr_1phase.shape[0]
+        # nday = anomaly_olr_1phase.shape[0]
         anomaly_mean: xr.DataArray = anomaly_olr_1phase.mean(axis=0)
         olr_mean = olr_1phase.mean(axis=0)
 
@@ -733,6 +1506,7 @@ def plot_mjo_phase(mjo_phase: pd.DataFrame, olr: xr.DataArray, high_amplitude: b
             sig_map: xr.DataArray = value_mjo_significant_map(phase=phase, grid=anomaly_mean, month=month)
             # olr_mean = filter_2d_by_mask(olr_mean, mask=sig_map)
             anomaly_mean = filter_2d_by_mask(anomaly_mean, mask=sig_map)
+            # to fix type
 
         ax = set_active_axis(axs=axs, n=phase - 1)
         set_basemap(area='swio', ax=ax)
@@ -776,7 +1550,7 @@ def plot_mjo_phase(mjo_phase: pd.DataFrame, olr: xr.DataArray, high_amplitude: b
     print(f'got plot')
 
 
-def plot_hourly_curve_by_month(df: pd.DataFrame, columns: list, suptitle=' ', months=[11, 12, 1, 2, 3, 4]):
+def plot_hourly_curve_by_month(df: pd.DataFrame, columns: list, suptitle=' ', months=None):
     """
     plot hourly curves by /month/ for the columns in list
     :param months:
@@ -786,8 +1560,9 @@ def plot_hourly_curve_by_month(df: pd.DataFrame, columns: list, suptitle=' ', mo
     :return:
     """
 
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
+    if months is None:  # 👍
+        months = [11, 12, 1, 2, 3, 4]
+
     # ----------------------------- set parameters -----------------------------
     # months = [11, 12, 1, 2, 3, 4]
     colors = ['black', 'green', 'orange', 'red']
@@ -803,10 +1578,9 @@ def plot_hourly_curve_by_month(df: pd.DataFrame, columns: list, suptitle=' ', mo
     axs = axs.ravel()
     # ----------------------------- plotting -----------------------------
 
-    from matplotlib.dates import DateFormatter
     for v in range(len(columns)):
         for i in range(nrows):
-            ax = plt.sca(axs[i])  # active this subplot
+            plt.sca(axs[i])  # active this subplot
 
             month = months[i]
             data_slice = df[df.index.month == month]
@@ -848,37 +1622,34 @@ def plot_hourly_curve_by_month(df: pd.DataFrame, columns: list, suptitle=' ', mo
     print(f'got the plot')
 
 
-## two tail = 0.95:
 def get_T_value(conf_level: float = 0.05, dof: int = 10):
     """
     get value of T
+    two tail = 0.95:
     :param conf_level:
     :param dof:
     :return:
     """
-    T_value = [ \
-        12.71, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, \
-        2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086, \
-        2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042, \
-        2.040, 2.037, 2.035, 2.032, 2.030, 2.028, 2.026, 2.024, 2.023, 2.021, \
-        2.020, 2.018, 2.017, 2.015, 2.014, 2.013, 2.012, 2.011, 2.010, 2.009, \
-        2.008, 2.007, 2.006, 2.005, 2.004, 2.003, 2.002, 2.002, 2.001, 2.000, \
-        2.000, 1.999, 1.998, 1.998, 1.997, 1.997, 1.996, 1.995, 1.995, 1.994, \
-        1.994, 1.993, 1.993, 1.993, 1.992, 1.992, 1.991, 1.991, 1.990, 1.990, \
-        1.990, 1.989, 1.989, 1.989, 1.988, 1.988, 1.988, 1.987, 1.987, 1.987, \
+
+    print(conf_level)
+
+    T_value = [
+        12.71, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228,
+        2.201, 2.179, 2.160, 2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086,
+        2.080, 2.074, 2.069, 2.064, 2.060, 2.056, 2.052, 2.048, 2.045, 2.042,
+        2.040, 2.037, 2.035, 2.032, 2.030, 2.028, 2.026, 2.024, 2.023, 2.021,
+        2.020, 2.018, 2.017, 2.015, 2.014, 2.013, 2.012, 2.011, 2.010, 2.009,
+        2.008, 2.007, 2.006, 2.005, 2.004, 2.003, 2.002, 2.002, 2.001, 2.000,
+        2.000, 1.999, 1.998, 1.998, 1.997, 1.997, 1.996, 1.995, 1.995, 1.994,
+        1.994, 1.993, 1.993, 1.993, 1.992, 1.992, 1.991, 1.991, 1.990, 1.990,
+        1.990, 1.989, 1.989, 1.989, 1.988, 1.988, 1.988, 1.987, 1.987, 1.987,
         1.986, 1.986, 1.986, 1.986, 1.985, 1.985, 1.985, 1.984, 1.984, 1.984]
-
-    if dof < 1:
-        return np.nan
-
-        quit()
 
     # infinity:
     if dof > 100:
         return 1.960
     else:
         return T_value[dof - 1]
-
 
 # ===================================================
 # one tail t test table:
@@ -998,15 +1769,15 @@ def value_mjo_significant_map(phase: int, grid: xr.DataArray = 0, month: str = 0
     mjo_phase: pd.DataFrame = read_mjo()
 
     # ----------------------------- read necessary data: era5 ttr reanalysis data
-    ttr_swio = xr.open_dataset(f'~/local_data/era5/ttr.era5.1999-2016.day.swio.nc')['ttr']
+    # ttr_swio = xr.open_dataset(f'~/local_data/era5/ttr.era5.1999-2016.day.swio.nc')['ttr']
     ttr_swio = xr.open_dataset(f'~/local_data/era5/ttr.era5.1999-2016.day.reu.nc')['ttr']
 
     if isinstance(month, str):
         ttr_swio = filter_xr_by_month(ttr_swio, month=month)
-        mjo_phase = filter_df_by_month(mjo_phase, month=month)
+        mjo_phase: pd.DataFrame = filter_df_by_month(mjo_phase, month=month)
 
     # ----------------------------- anomaly OLR -----------------------------
-    olr_swio = convert_ttr_era5_2_olr(ttr=ttr_swio, is_reanalysis=1)
+    olr_swio = convert_ttr_era5_2_olr(ttr=ttr_swio, is_reanalysis=True)
     olr_swio_anomaly = anomaly_daily(olr_swio)
 
     # select phase:
@@ -1015,7 +1786,7 @@ def value_mjo_significant_map(phase: int, grid: xr.DataArray = 0, month: str = 0
 
     # ----------------------------- calculate sig_map -----------------------------
     print(f'calculating significant map, dims={str(olr_swio_anomaly_1phase.shape):s}, waiting ... ')
-    sig_map_olr: np.ndarray = value_significant_of_anomaly_2d_mask(field_3d=olr_swio_anomaly_1phase, conf_level=0.05)
+    sig_map_olr: xr.DataArray = value_significant_of_anomaly_2d_mask(field_3d=olr_swio_anomaly_1phase, conf_level=0.05)
 
     # to see if remap is necessary:
     if isinstance(grid, int):
@@ -1040,9 +1811,6 @@ def value_mjo_significant_map(phase: int, grid: xr.DataArray = 0, month: str = 0
         for lat in range(grid.latitude.size):
             for lon in range(grid.longitude.size):
                 new_sig_map[lat, lon] = sig_map_olr.loc[dict(latitude=new_lat[lat], longitude=new_lon[lon])].values
-                # print(new_sig_map[lat, lon])
-                # print(f'lat = {lat:g}, lon = {lon:g}')
-                # print(f'new lat = {new_lat[lat]:%2f}, new_lon = {new_lon[lon]:%2f}')
 
     # return sig map in 2D xr.DataArray:
     sig = xr.DataArray(new_sig_map.astype(bool), coords=[grid.latitude, grid.longitude], dims=grid.dims)
@@ -1050,38 +1818,25 @@ def value_mjo_significant_map(phase: int, grid: xr.DataArray = 0, month: str = 0
     return sig
 
 
-def value_time_of_emergence(std: xr.DataArray, time_series: xr.DataArray):
-    """
-    calculate time of emergence
-    Parameters
-    ----------
-    std :
-    time_series :
-
-    Returns
-    -------
-    """
-
-    return 1
-
-
 def value_significant_of_anomaly_2d_mask(field_3d: xr.DataArray, conf_level: float = 0.05) -> xr.DataArray:
     """
     calculate 2d map of significant of values in true false
     :param conf_level: default = 0.05
     :param field_3d: have to be in (time, lat, lon)
-    :return: 2d array of true false
+    :return: 2d array of true false xr.DataArray
     """
 
-    # there's another coord beside 'longitude' 'latitude', which is the dim of signigicant !!!
-    sig_coord_name = [x for x in field_3d.dims if x not in ['longitude', 'latitude']][0]
+    # there's another coord beside 'longitude' 'latitude', which is the dim of significant !!!
+    sig_coord_name = [x for x in field_3d.dims if x not in ['lon', 'lat']][0]
 
     # tag, note: change order of dim:
-    field_3d = field_3d.transpose(sig_coord_name, "latitude", "longitude")
+    field_3d = field_3d.transpose(sig_coord_name, "lat", "lon")
 
     sig_2d = np.zeros((field_3d.shape[1], field_3d.shape[2]))
 
+    print(f'get significant map...')
     for lat in range(field_3d.shape[1]):
+        print(f'significant ----- {lat * 100 / len(field_3d.lat): 4.2f} % ...')
         for lon in range(field_3d.shape[2]):
             grid = field_3d[:, lat, lon]
 
@@ -1101,15 +1856,6 @@ def value_significant_of_anomaly_2d_mask(field_3d: xr.DataArray, conf_level: flo
 
             # print(sig_2d.shape, lat, lon)
 
-            # option 1
-            # compare the abs(t_statistic) with t_limit:
-            # https: // zhuanlan.zhihu.com / p / 138711532
-
-            # t_limit = get_T_value(len(grid))
-            # print(t_statistic, t_limit, p_value_2side)
-            # if np.abs(t_statistic) > t_limit:
-            #   sig_2d[lat, lon] = 1
-
     # option 2:
     # 根据定义，p值大小指原假设H0为真的情况下样本数据出现的概率。
     # 在实际应用中，如果p值小于0.05，表示H0为真的情况下样本数据出现的概率小于5 %，
@@ -1118,7 +1864,7 @@ def value_significant_of_anomaly_2d_mask(field_3d: xr.DataArray, conf_level: flo
 
     # return sig map in 2D xr.DataArray:
     sig_map_da = field_3d.mean(sig_coord_name)
-    sig = xr.DataArray(sig_map.astype(bool), coords=[field_3d.latitude, field_3d.longitude], dims=sig_map_da.dims)
+    sig = xr.DataArray(sig_map.astype(bool), coords=[field_3d.lat, field_3d.lon], dims=sig_map_da.dims)
 
     # sig.plot()
     # plt.show()
@@ -1153,7 +1899,18 @@ def value_remap_a_to_b(a: xr.DataArray, b: xr.DataArray):
     return interpolated
 
 
-def value_season_mean_ds(ds, calendar='standard'):
+def value_season_mean_ds(ds, time_calendar='standard'):
+    """
+
+    :param ds:
+    :type ds:
+    :param time_calendar:
+    :type time_calendar:
+    :return:
+    :rtype:
+    """
+
+    print(f'calendar is {time_calendar:s}')
     # Make a DataArray with the number of days in each month, size = len(time)
     month_length = ds.time.dt.days_in_month
 
@@ -1189,6 +1946,8 @@ def value_map_corner_values_from_coverage(coverage: str):
 def value_replace_in_xr(data, dim_name: str, new_values: np.ndarray):
     """
     replace values in xr.DataArray or xr.DataSet, by array
+    :param dim_name:
+    :type dim_name:
     :param data:
     :param new_values:
     :return:
@@ -1202,6 +1961,8 @@ def value_replace_in_xr(data, dim_name: str, new_values: np.ndarray):
 def convert_utc2local_da(test: bool, da):
     """
     convert utc time to local time
+    :param test:
+    :type test:
     :param da:
     :return:
     """
@@ -1216,7 +1977,7 @@ def convert_utc2local_da(test: bool, da):
         if test:
             print(utc, local_time)
 
-    value_replace_in_xr(data=da, dim_name='time', new_values=time_local)
+    value_replace_in_xr(data=da, dim_name='time', new_values=np.array(time_local))
 
     return da
 
@@ -1253,9 +2014,11 @@ def value_consistency_sign_with_mean_in_percentage_2d(field_3d: xr.DataArray):
     return percentage_2d_map
 
 
-def set_basemap(ax: plt.Axes, area: object) -> object:
+def set_basemap(ax: plt.Axes, area: str):
     """
     set basemap
+    :param ax:
+    :type ax: cartopy.mpl.geoaxes.GeoAxesSubplot
     :param area:
     :return:
     """
@@ -1267,22 +2030,6 @@ def set_basemap(ax: plt.Axes, area: object) -> object:
 
     ax.coastlines('50m')
     ax.add_feature(cfeature.LAND.with_scale('10m'))
-
-
-def format_2darray_into_latlon_map(nd_array: np.ndarray, lat: xr.DataArray, lon: xr.DataArray):
-    """
-    put values in type of np.ndarray into lonlat map in format of xr.DataArray
-    :param nd_array:
-    :param lon:
-    :param lat:
-    :return:
-    """
-    # TODO: check the dimensions in input data
-
-    da = xr.DataArray(nd_array, coords=[lat, lon])
-    # da = xr.DataArray(nd_array, coords={'latitude': lat, 'longitude': lon}, dims=['latitude', 'longitude'])
-
-    return da
 
 
 def set_active_axis(axs: np.ndarray, n: int):
@@ -1300,11 +2047,13 @@ def set_active_axis(axs: np.ndarray, n: int):
     return ax
 
 
+# noinspection PyUnresolvedReferences
 def set_cbar(vmax, vmin, n_cbar, bias):
     """
     set for color bar
-    :param array:
-    :param n_bar:
+    :param n_cbar:
+    :param vmin:
+    :param vmax:
     :param bias:
     :return: cmap, norm
     """
@@ -1349,6 +2098,8 @@ def tag_from_str(string: str):
 def print_data(data, dim: int = 2):
     """
     print all data
+    :param dim:
+    :type dim:
     :param data:
     :return:
     """
@@ -1368,8 +2119,9 @@ def print_data(data, dim: int = 2):
 def filter_3d_by_list_date(data: xr.DataArray, dates: np.ndarray):
     """
     filter 3d (time, lon, lat) data, by list/array of datetime.date objects
+    :param dates:
+    :type dates:
     :param data:
-    :param datetime:
     :return:
     """
 
@@ -1379,9 +2131,7 @@ def filter_3d_by_list_date(data: xr.DataArray, dates: np.ndarray):
 
         for i in range(dates.shape[0]):
             date = dates[i]
-
             selected = data.sel(time=str(date))
-
             if i == 0:
                 first_day = selected
             else:
@@ -1398,7 +2148,8 @@ def read_mjo(match_ssr_avail_day: bool = 0):
     :return: pd.DataFrame
     """
     mjo_sel = f'SELECT ' \
-              f'ADDTIME(CONVERT(left(dt, 10), DATETIME), MAKETIME(HOUR(dt), floor(MINUTE(dt) / 10)*10,0)) as DateTime, ' \
+              f'ADDTIME(CONVERT(left(dt, 10), DATETIME), MAKETIME(HOUR(dt), ' \
+              f'floor(MINUTE(dt) / 10)*10,0)) as DateTime, ' \
               f'AVG(GHI_020_Avg) as ssr, ' \
               f'MONTH(dt) as Month, HOUR(dt) as Hour, ' \
               f'floor(MINUTE(dt) / 10)*10 as Minute ' \
@@ -1407,6 +2158,7 @@ def read_mjo(match_ssr_avail_day: bool = 0):
               f'(dt>="2018-03-01" and dt<="2019-05-01") ' \
               f'group by date(dt), hour(dt), floor(minute(dt) / 10);'
 
+    print(mjo_sel)
     mjo_query = f'SELECT dt as DateTime, rmm1, rmm2, phase, amplitude ' \
                 f'from SWIO.MJO_index ' \
                 f'where year(dt)>=1999 and year(dt)<=2016;'
@@ -1454,7 +2206,7 @@ def sellonlatbox(da: xr.DataArray, lonlatbox: list):
     return da2
 
 
-def filter_2d_by_mask(data, mask):
+def filter_2d_by_mask(data: xr.DataArray, mask: xr.DataArray):
     """
     filtering 2d data by mask
     :param data:
@@ -1463,28 +2215,28 @@ def filter_2d_by_mask(data, mask):
     """
 
     # check if the dims of data and mask is the same:
-    check_lat: np.ndarray = data.latitude == mask.latitude
-    check_lon: np.ndarray = data.longitude == mask.longitude
+    check_lat = data.lat == mask.lat
+    check_lon = data.lon == mask.lon
 
     if np.logical_or(False in check_lat, False in check_lon):
         print(f'maks and data in different lonlat coords...check ...')
         breakpoint()
 
-    if isinstance(data, np.ndarray):
-        data_to_return: np.ndarray = data[mask]
-        # Attention: if the mask is not square/rectangle of Trues, got 1d array;
+    # if isinstance(data, np.ndarray):
+    #     data_to_return: np.ndarray = data[mask]
+    #     # Attention: if the mask is not square/rectangle of Trues, got 1d array;
 
     if isinstance(data, xr.DataArray):
         # build up a xr.DataArray as mask, only type of DataArray works.
-        lookup = xr.DataArray(mask, dims=('latitude', 'longitude'))
-        # todo: if not works with other dims names.
+        lookup = xr.DataArray(mask, dims=('lat', 'lon'))
+        # use the standard dim names 'time', 'lat', 'lon'
 
         data_to_return = data.where(lookup)
 
     return data_to_return
 
 
-def value_month_from_str(month: str) -> int:
+def value_month_from_str(month: str):
     """
     get month as array from string such as 'JJA'
     :rtype: int
@@ -1493,21 +2245,6 @@ def value_month_from_str(month: str) -> int:
     """
 
     # TODO: from first letter to number
-
-    month_dict = {
-        'J': 1,
-        'F': 2,
-        'M': 3,
-        'A': 4,
-        'M': 5,
-        'J': 6,
-        'J': 7,
-        'A': 8,
-        'S': 9,
-        'O': 10,
-        'N': 11,
-        'D': 12,
-    }
 
     if month == 'JJA':
         mon = (6, 7, 8)
@@ -1519,7 +2256,7 @@ def value_month_from_str(month: str) -> int:
     return mon
 
 
-def filter_df_by_month(data: xr.DataArray, month: str) -> xr.DataArray:
+def filter_df_by_month(data: pd.DataFrame, month: str) -> pd.DataFrame:
     """
     filtering xr.DataArray by input string of season
     :param data:
@@ -1562,7 +2299,7 @@ def filter_by_season_name(data: xr.DataArray, season_name: str):
     """
     filtering data by input string of season
     :param data:
-    :param season: summer, winter, austral_summer, austral_winter, etc..
+    :param season_name: summer, winter, austral_summer, austral_winter, etc..
     :return:
     """
 
@@ -1579,7 +2316,7 @@ def filter_by_season_name(data: xr.DataArray, season_name: str):
     return return_data
 
 
-def data_filter_by_key_limit_value(data: xr.DataArray, key: str, how: str, value: float):
+def data_filter_by_key_limit_value(data, key: str, how: str, value: float):
     """
     filtering data by a value of keyword
     :param data:
@@ -1588,15 +2325,15 @@ def data_filter_by_key_limit_value(data: xr.DataArray, key: str, how: str, value
     :param value: float
     :return: data after filtered
     """
+    #
+    # how_dict = dict(
+    #     lt='<',
+    #     gt='>',
+    #     eq='==',
+    #     lteq='<=',
+    #     gteq='<=')
 
-    how_dict = dict(
-        lt='<',
-        gt='>',
-        eq='==',
-        lteq='<=',
-        gteq='<=')
-
-    filter_str = f'{key:s} {how_dict[how]} {value:.2f}'
+    # filter_str = f'{key:s} {how_dict[how]} {value:.2f}'
 
     if isinstance(data, pd.DataFrame):
         if how == 'gt':
@@ -1617,25 +2354,32 @@ def get_time_lon_lat_from_da(da: xr.DataArray):
 
     Returns
     -------
-    dict :     return {'time': time, 'lon': lon, 'lat': lat}
+    dict :     return {'time': time, 'lon': lon, 'lat': lat, 'number': number}
     """
-    coords_names = get_time_lon_lat_name_from_da(da)
+    coords_names: dict = get_time_lon_lat_name_from_da(da)
+    # attention: here the coords names maybe the dim names, if coords is missing in the *.nc file.
 
     coords = dict()
 
     if 'lon' in coords_names:
         lon = da[coords_names['lon']].values
 
-        if lon.ndim > 1:
+        if lon.ndim == 2:
             lon = lon[0]
+        # for WRF out, it has 3 dims (time, lon, lat), even they are the same
+        if lon.ndim == 3:
+            lon = lon[0, 0]
         lon = np.array([x - 360 if x > 180 else x for x in lon])
 
         coords.update(lon=lon)
 
     if 'lat' in coords_names:
         lat = da[coords_names['lat']].values
-        if lat.ndim > 1:
+        if lat.ndim == 2:
             lat = lat[:, 0]
+        # for WRF out, it has 3 dims (time, lat, lat), even they are the same
+        if lat.ndim == 3:
+            lat = lat[0, :, 0]
 
         coords.update(lat=lat)
 
@@ -1646,6 +2390,10 @@ def get_time_lon_lat_from_da(da: xr.DataArray):
     if 'lev' in coords_names:
         lev = da[coords_names['lev']].values
         coords.update(lev=lev)
+
+    if 'number' in coords_names:
+        number = da[coords_names['number']].values
+        coords.update(number=number)
 
     return coords
 
@@ -1659,41 +2407,45 @@ def get_time_lon_lat_name_from_da(da: xr.DataArray):
 
     Returns
     -------
-    dict :     return {'time': time, 'lon': lon, 'lat': lat}
+    dict :     return {'time': time, 'lon': lon, 'lat': lat, 'number': number}
     """
     # definitions:
-    possible_lon_name = ['lon', 'rlon', 'longitude', 'x', 'XLONG', 'XLONG_U', 'XLONG_V']
-    possible_lat_name = ['lat', 'rlat', 'latitude', 'y', 'XLAT', 'XLAT_U', 'XLAT_V']
-    possible_time_name = ['time', 'datetime', 't', 'XTIME']
-    possible_level_name = ['lev', 'xlevel', 'level', 'lev_2']
+    possible_coords_names = {
+        'time': ['time', 'datetime', 'XTIME'],
+        'lon': ['lon', 'rlon', 'longitude', 'x', 'XLONG', 'XLONG_U', 'XLONG_V'],
+        'lat': ['lat', 'rlat', 'latitude', 'y', 'XLAT', 'XLAT_U', 'XLAT_V'],
+        'lev': ['height', 'bottom_top', 'lev', 'level', 'xlevel', 'lev_2'],
+        'number': ['number', 'num', 'model']
+        # the default name is 'number'
+    }
 
-    coords = list(da.coords._names)
+    # coords = list(da.dims)
+    # ATTENTION: num of dims is sometimes larger than coords: WRF has bottom_top but not such coords
+    # ATTENTION: dims names are not the same as coords, WRF dim='south_north', coords=XLAT
+    # so save to use the coords names.
+    coords = list(dict(da.coords).keys())
+    dims = list(da.dims)
 
-    if len(coords) == 1:
-        print(f'the data has only ONE coords {coords[0]:s}')
-
-    if len(coords) == 2:
-        print(f'the data has only two coords:', coords)
-
-    lon_name = [x for x in possible_lon_name if x in coords]
-    lat_name = [x for x in possible_lat_name if x in coords]
-    time_name = [x for x in possible_time_name if x in coords]
-    lev_name = [x for x in possible_level_name if x in coords]
-
-    length = len(lon_name) + len(lat_name) + len(time_name) + len(lev_name)
-    if len(coords) > length:
-        print(f'-------------------------------------------------')
-        print(f'less coords names found, check the possible list')
-        print(da.head(), da.coords, da.dims)
-        print(f'-------------------------------------------------')
+    # coords = list(da.coords._names)
+    # CTANG: coords should be a list not a string.
+    # since: 't' is in 'time', 'level' is in 'xlevel'
+    # and: ['t'] is not in ['time']; 't' is not in ['time']
 
     # construct output
     coords_names = {}
-    output_keys = ['time', 'lon', 'lat', 'lev']
-    list_name_lists = [time_name, lon_name, lat_name, lev_name]
-    for key, name_list in zip(output_keys, list_name_lists):
-        if len(name_list) == 1:
-            coords_names.update({key: name_list[0]})
+
+    for key, possible_list in possible_coords_names.items():
+        coord_name = [x for x in possible_list if x in coords]
+        if len(coord_name) == 1:
+            coords_names.update({key: coord_name[0]})
+        else:
+            # check if this coords is missing in dims
+            dim_name = [x for x in possible_list if x in dims]
+            if len(dim_name) == 1:
+                coords_names.update({key: dim_name[0]})
+
+                print(f'coords {key:s} not found, using dimension name: {dim_name[0]}')
+                warnings.warn('coords missing')
 
     return coords_names
 
@@ -1733,15 +2485,17 @@ def get_min_max_ds(ds: xr.Dataset):
     -------
     """
     list_var = list(ds.keys())
-    max = np.max([ds[v].max().values for v in list_var])
-    min = np.min([ds[v].min().values for v in list_var])
+    vmax = np.max([ds[v].max().values for v in list_var])
+    vmin = np.min([ds[v].min().values for v in list_var])
 
-    return min, max
+    return vmin, vmax
 
 
 def plot_hourly_boxplot_ds_by(list_da: list, list_var_name: list, by: str = 'Month', comment='no comment'):
     """
     plot hourly box plot by "Month" or "Season"
+    :param comment:
+    :type comment:
     :param list_da: the input da should be in the same coords
     :param list_var_name:
     :param by: 'Month' or 'season'
@@ -1749,7 +2503,6 @@ def plot_hourly_boxplot_ds_by(list_da: list, list_var_name: list, by: str = 'Mon
     """
 
     import seaborn
-    import matplotlib.pyplot as plt
 
     ds = convert_multi_da_to_ds(list_da=list_da, list_var_name=list_var_name)
 
@@ -1778,8 +2531,6 @@ def plot_hourly_boxplot_ds_by(list_da: list, list_var_name: list, by: str = 'Mon
         nrow = 1
         ncol = 1
         tags = None
-
-    n_plot = nrow * ncol
 
     fig, axs = plt.subplots(nrows=nrow, ncols=ncol,
                             figsize=(ncol * 9, nrow * 3), facecolor='w', edgecolor='k', dpi=200)  # figsize=(w,h)
@@ -1813,7 +2564,8 @@ def plot_hourly_boxplot_ds_by(list_da: list, list_var_name: list, by: str = 'Mon
             da_slice = data_slice[list_var_name[col]]
             var['target'] = da_slice.values.ravel()
             var['Hour'] = da_slice.to_dataframe().index.get_level_values(0).hour
-            var['var'] = [list_var_name[col] for x in range(len(da_slice.values.ravel()))]
+            var['var'] = [list_var_name[col] for _ in range(len(da_slice.values.ravel()))]
+            # var['var'] = [list_var_name[col] for x in range(len(da_slice.values.ravel()))]
             all_var = all_var.append(var)
 
         seaborn.boxplot(x='Hour', y='target', hue='var', data=all_var, ax=ax, showmeans=True)
@@ -1865,7 +2617,6 @@ def plot_hourly_boxplot_by(df: pd.DataFrame, columns: list, by: str):
     """
 
     import seaborn
-    import matplotlib.pyplot as plt
 
     if by == 'Month':
         nrow = 7
@@ -1874,7 +2625,7 @@ def plot_hourly_boxplot_by(df: pd.DataFrame, columns: list, by: str):
         nrow = 1
         ncol = 1
 
-    n_plot = nrow * ncol
+    # n_plot = nrow * ncol
 
     fig, axs = plt.subplots(nrows=nrow, ncols=ncol,
                             figsize=(10, 19), facecolor='w', edgecolor='k', dpi=200)  # figsize=(w,h)
@@ -1897,12 +2648,11 @@ def plot_hourly_boxplot_by(df: pd.DataFrame, columns: list, by: str):
 
         all_var = pd.DataFrame()
         for col in range(len(columns)):
-            # print(f'for var = {columns[col]:s}')
             # calculate normalised value:
             var = pd.DataFrame()
             var['target'] = data_slice[columns[col]]
             var['Hour'] = data_slice.index.hour
-            var['var'] = [columns[col] for x in range(len(data_slice))]
+            var['var'] = [columns[col] for _ in range(len(data_slice))]
             all_var = all_var.append(var)
 
         seaborn.boxplot(x='Hour', y='target', hue='var', data=all_var, ax=ax, showmeans=True)
@@ -1933,7 +2683,6 @@ def plot_hourly_boxplot_by(df: pd.DataFrame, columns: list, by: str):
         ax.yaxis.grid(color='gray', linestyle='dashed')
 
     print(f'save/show the plot ...')
-    # plt.savefig(f'train_boxplot_by_{by:s}.png', dpi=200)
 
     plt.show()
 
@@ -1952,7 +2701,6 @@ def plot_scatter_color_by(x: pd.DataFrame, y: pd.DataFrame, label_x: str, label_
     :param color_by_column:
     :return:
     """
-    import matplotlib.pyplot as plt
 
     # default is color_by = month
 
@@ -1998,28 +2746,25 @@ def get_random_color(num_color: int):
     :param num_color:
     :return:
     """
-    import matplotlib.pyplot as plt
     import random
 
     number_of_colors = num_color
 
-    color = ["#" + ''.join([random.choice('0123456789ABCDEF') for j in range(6)])
-             for i in range(number_of_colors)]
+    color = ["#" + ''.join([random.choice('0123456789ABCDEF') for _ in range(6)])
+             for _ in range(number_of_colors)]
 
     return color
 
 
 # ==================================
-def station_data_missing_map_hourly_by_month(df: pd.DataFrame, station_id: str, columns: str):
+def station_data_missing_map_hourly_by_month(df: pd.DataFrame, station_id: str):
     """
     plot hourly missing data map by month
     :param station_id:
     :param df:
-    :param columns: which column to be checked
     :return:
     """
 
-    import matplotlib.pyplot as plt
     # ----------------------------- set parameters -----------------------------
     # TODO: read month directly
     months = [11, 12, 1, 2, 3, 4]
@@ -2034,13 +2779,11 @@ def station_data_missing_map_hourly_by_month(df: pd.DataFrame, station_id: str, 
     axs = axs.ravel()
     # ----------------------------- plotting -----------------------------
 
-    from matplotlib.dates import DateFormatter
-
     # plot data in each month:
     for i in range(len(months)):
         month = months[i]
 
-        ax = plt.sca(axs[i])  # active this subplot
+        plt.sca(axs[i])  # active this subplot
 
         month_data = df[df.index.month == month].sort_index()
 
@@ -2110,6 +2853,7 @@ def station_data_missing_map_hourly_by_month(df: pd.DataFrame, station_id: str, 
     plt.savefig('./meteofrance_missing_map.png', dpi=200)
 
 
+# noinspection PyUnresolvedReferences
 def plot_station_value_by_month(lon: pd.DataFrame, lat: pd.DataFrame, value: pd.DataFrame,
                                 cbar_label: str, fig_title: str, bias=False):
     """
@@ -2122,16 +2866,14 @@ def plot_station_value_by_month(lon: pd.DataFrame, lat: pd.DataFrame, value: pd.
     :param value:
     :return: map show
     """
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.pyplot as plt
+
+    print(fig_title)
     import matplotlib as mpl
 
     months = [11, 12, 1, 2, 3, 4]
     month_names = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr']
-    nrows = len(months)
 
-    fig = plt.figure(figsize=(5, 24), dpi=200)
+    plt.figure(figsize=(5, 24), dpi=200)
     # fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=1.5, top=0.95, wspace=0.05)
 
     # plot in each month:
@@ -2172,6 +2914,7 @@ def plot_station_value_by_month(lon: pd.DataFrame, lat: pd.DataFrame, value: pd.
             cmap = plt.cm.coolwarm
             vmin = max(np.abs(vmin), np.abs(vmax)) * (- 1)
             vmax = max(np.abs(vmin), np.abs(vmax))
+            print(vmax)
         else:
             cmap = plt.cm.YlOrRd
 
@@ -2222,17 +2965,14 @@ def monthly_circulation(lon: xr.DataArray, lat: xr.DataArray,
     :return: map show
     """
 
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.pyplot as plt
-    import matplotlib as mpl
+    print(cbar_label, fig_title, bias)
 
     months = [11, 12, 1, 2, 3, 4]
     dates = ['2004-11-01', '2004-12-01', '2005-01-01', '2005-02-01', '2005-03-01', '2005-04-01']
     month_names = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr']
-    nrows = len(months)
+    # nrows = len(months)
 
-    fig = plt.figure(figsize=(5, 24), dpi=300)
+    plt.figure(figsize=(5, 24), dpi=300)
     # fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=1.5, top=0.95, wspace=0.05)
 
     # plot in each month:
@@ -2286,7 +3026,7 @@ def monthly_circulation(lon: xr.DataArray, lat: xr.DataArray,
         quiver_kwargs = {'headlength': 5, 'headwidth': 3, 'angles': 'uv', 'scale_units': 'xy', 'scale': n_scale}
 
         # Plot the wind vectors
-        wind = ax.quiver(x[quiver_slices], y[quiver_slices],
+        ax.quiver(x[quiver_slices], y[quiver_slices],
                          monthly_u[quiver_slices, quiver_slices], monthly_v[quiver_slices, quiver_slices],
                          color='blue', zorder=2, **quiver_kwargs)
 
@@ -2323,19 +3063,16 @@ def monthly_circulation(lon: xr.DataArray, lat: xr.DataArray,
     plt.show()
     print(f'got plot')
 
-    plt.savefig(f'{DIR:s}/monthly_circulation.png', dpi=220)
+    plt.savefig(f'./monthly_circulation.png', dpi=220)
 
 
 def convert_multi_da_by_new_dim(list_da: list, new_dim: dict):
     """
-    return new da
-    Parameters
-    ----------
-    list_da :
-    new_dim :
+    Args:
+        list_da ():
+        new_dim ():
 
-    Returns
-    -------
+    Returns: a new da
 
     """
 
@@ -2350,6 +3087,158 @@ def convert_multi_da_by_new_dim(list_da: list, new_dim: dict):
     return ensemble
 
 
+def get_gcm_list_in_dir(var: str, path: str):
+
+    files: list = glob.glob(f'{path:s}/{var:s}*nc')
+
+    gcm = list(set([s.split('_')[2] for s in files]))
+
+    gcm.sort()
+
+    return gcm
+
+
+def convert_cmip6_ensemble_2_standard_da(
+        var: str,
+        ssp: str,
+        freq: str,
+        output_nc: str,
+        year_start: int,
+        year_end: int,
+        raw_data_dir: str,
+        output_dir: str,
+        raw_file_tag: str,
+        set_same_cal: bool = False,
+        remapping: bool = False):
+
+    """
+    to read the raw cmip6 files, before mergetime, and do processes to save it to single netcdf file
+    with the same lon lat, same calender.
+
+    rules to follow: attention 1) make input and output separately in different dirs 2) temp file do not have .nc
+    in the end.
+
+    Args:
+        output_nc ():
+        set_same_cal ():
+        remapping (bool):
+        raw_file_tag ():
+        year_end ():
+        year_start ():
+        var ():
+        ssp ():
+        raw_data_dir ():
+        output_dir ():
+        freq ():
+
+    Returns:
+        path of output file absolute
+
+    """
+
+    # definition:
+
+    ensemble = 'r1i1p1f1'
+    grid = 'gn'
+    # ----------------------------- 1st, merge the data to 1970-2099.nc -----------------------------
+
+    # attention this part is done with the code in ./src/
+    # all model are merged with the same period, num of year for example
+
+    # ----------------------------- 2nd, prepare the standard data xr.DataArray-----------------------------
+    # with the same dims names
+
+    # example of file: rsds_Amon_MPI-ESM1-2-LR_ssp585_r1i1p1f1_gn_2015-2099.year.global_mean.nc
+    wildcard_raw_file = f'{raw_data_dir:s}/{var:s}*{freq:s}*{ssp:s}_{ensemble:s}_{grid:s}_' \
+                        f'{year_start:g}-{year_end:g}*{raw_file_tag:s}.nc'
+
+    raw_files: list = glob.glob(wildcard_raw_file)
+
+    # gcm list
+    gcm_list = list(set([a.split("_")[2] for a in raw_files]))
+    gcm_list.sort()
+
+    for ff in range(len(raw_files)):
+        # attention: when using matching, careful that CESM2 ~ CESM2-XXX
+        gcm_name = [model for model in gcm_list if raw_files[ff].find(f'_{model:s}_') > 0][0]
+        # gcm_name = [model for model in gcm_list if model in raw_files[ff].split('_')][0]
+
+        # find
+
+        da = read_to_standard_da(raw_files[ff], var=var)
+        da = da.assign_attrs(model_name='gcm_name')
+        # here the name is saved to the final ensemble da
+        # each name of gcm is in the coords of model_name (new dim)
+
+        if not ff:
+            lon = get_time_lon_lat_from_da(da)['lon']
+            time = get_time_lon_lat_from_da(da)['time']
+            lat = get_time_lon_lat_from_da(da)['lat']
+
+        # create a new DataArray:
+        new_da = xr.DataArray(data=da.values.astype(np.float32),
+                              dims=('time', 'lat', 'lon'),
+                              coords={'time': time, 'lat': lat, 'lon': lon},
+                              name=var)
+        new_da = new_da.assign_attrs({'model_name': gcm_name,
+                                      'units': da.attrs['units'],
+                                      'missing_value': np.NAN})
+
+        # new_da = new_da.dropna(dim='latitude')
+
+        if set_same_cal:
+            # convert time to the same calendar:
+            new_da = convert_da_to_360day_monthly(new_da)
+
+        if remapping:
+            # since the lon/lat are different in nc files, remap them to the same/smallest domain:
+            # select smaller domain as "GERICS-REMO2015_v1"
+            if ff == 0:
+                ref_da = new_da.mean(axis=0)
+            else:
+                print(f'ref:', ref_da.shape, f'remap:', new_da.shape)
+                new_da = value_remap_a_to_b(a=new_da, b=ref_da)
+                print(new_da.shape)
+
+        # temp data, in the raw_data dir
+
+        temp_data = f'{raw_files[ff]:s}.temp'
+        new_da.to_netcdf(temp_data)
+        print(f'save to {temp_data:s}')
+
+    # merge data from all models:
+    da_list: List[xr.DataArray] = [xr.open_dataarray(file + '.temp') for file in raw_files]
+
+    new_dim = [f'{aa.assign_attrs().model_name:s}' for aa in da_list]
+
+    # noinspection PyTypeChecker
+    ensemble_da = xr.concat(da_list, new_dim).rename({'concat_dim': 'model'})
+    ensemble_da = ensemble_da.squeeze(drop=True)
+
+    # rename attribute: model_name:
+    ensemble_da = ensemble_da.assign_attrs(model_name='ensemble')
+
+    # TODO: cdo sinfo do not works
+
+    # make time the 1st dim
+    # change order of dims so that cdo could read correctly
+    # dims = list(ensemble_da.dims)
+    # dims.remove('time')
+    # new_order = ['time'] + dims
+
+    ensemble_da = ensemble_da.transpose('time', 'model')
+
+    # output file name, to save in data dir
+    ensemble_da.to_netcdf(f'{output_dir:s}/{output_nc:s}')
+    # ----------------------------- ok, clean -----------------------------
+    # OK, remove the temp data:
+    os.system(f'rm -rf *nc.temp')
+
+    print(f'all done, the data is saved in {output_dir:s} as {output_nc:s}')
+
+    return f'{output_dir:s}/{output_nc:s}'
+
+
 def convert_cordex_ensemble_2_standard_da(
         var: str,
         domain: str,
@@ -2362,16 +3251,30 @@ def convert_cordex_ensemble_2_standard_da(
         statistic: str,
         test: bool):
     """
-
     to read the original netcdf files, before mergetime, and do processes to save it to single netcdf file
     with the same lon lat, same calender.
-
-    Parameters
-    ----------
-    test : bool
-    Returns
-    -------
-    no return
+    :param var:
+    :type var:
+    :param domain:
+    :type domain:
+    :param gcm:
+    :type gcm:
+    :param rcm:
+    :type rcm:
+    :param rcp:
+    :type rcp:
+    :param raw_data_dir:
+    :type raw_data_dir:
+    :param output_dir:
+    :type output_dir:
+    :param output_tag:
+    :type output_tag:
+    :param statistic:
+    :type statistic:
+    :param test:
+    :type test:
+    :return:
+    :rtype:
     """
 
     # ----------------------------- 1st, merge the data to 1970-2099.nc -----------------------------
@@ -2447,10 +3350,11 @@ def convert_cordex_ensemble_2_standard_da(
         # merge data from all models:
         files_to_merge = f'{raw_data_dir:s}/{var:s}.{statistic:s}.{domain:s}.{rcp:s}.*.{window:s}.nc.temp'
         files = glob.glob(files_to_merge)
-        da_list = [xr.open_dataarray(file) for file in files]
+        da_list: List[xr.DataArray] = [xr.open_dataarray(file) for file in files]
         new_dim = [f'{aa.assign_attrs().driving_model_id:s}->{aa.assign_attrs().model_id:s}'
                    for aa in da_list]
 
+        # noinspection PyTypeChecker
         ensemble_da = xr.concat(da_list, new_dim).rename({'concat_dim': 'model'})
         # change order of dims so that cdo could read correctly
         ensemble_da = ensemble_da.transpose('time', 'latitude', 'longitude', 'model')
@@ -2469,15 +3373,16 @@ def convert_cordex_ensemble_2_standard_da(
     print(f'all done, the data {window:s} is in ./data/{var:s}/')
 
 
-def plot_geo_map(map: xr.DataArray, bias: int, vmax: np.float = 100, vmin: np.float = 0,
+def plot_geo_map(data_map: xr.DataArray, bias: int, vmax: np.float = 100, vmin: np.float = 0,
                  suptitle_add_word: str = None):
     """
-    plot geo map in the aixs = ax
+    plot geo map in the axis = ax
+    :param suptitle_add_word:
+    :type suptitle_add_word:
     :param vmin:
     :param vmax:
     :param bias:
-    :param map:
-    :param ax:
+    :param data_map:
     :return:
     """
 
@@ -2493,22 +3398,24 @@ def plot_geo_map(map: xr.DataArray, bias: int, vmax: np.float = 100, vmin: np.fl
     # if max and min is default, then use the value in my table:
     if vmax == 100:
         if vmin == 0:
-            vmax, vmin = value_max_min_of_var(var=map.name, how=how)
+            vmax, vmin = value_max_min_of_var(var=str(data_map.name), how=how)
 
     cmap, norm = set_cbar(vmax=vmax, vmin=vmin, n_cbar=20, bias=bias)
 
-    lon = get_time_lon_lat_from_da(map)['lon']
-    lat = get_time_lon_lat_from_da(map)['lat']
+    lon = get_time_lon_lat_from_da(data_map)['lon']
+    lat = get_time_lon_lat_from_da(data_map)['lat']
 
-    cf: object = ax.contourf(lon, lat, map, levels=norm.boundaries,
+    cf: object = ax.contourf(lon, lat, data_map, levels=norm.boundaries,
                              cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), extend='both')
 
-    cbar_label = f'{map.name:s} ({map.assign_attrs().units:s})'
+    cbar_label = f'{data_map.name:s} ({data_map.assign_attrs().units:s})'
     # cb_ax = ax.add_axes([0.87, 0.2, 0.01, 0.7])
     # cb = plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, label=cbar_label)
     cb = plt.colorbar(cf, orientation='horizontal', shrink=0.8, pad=0.05, label=cbar_label)
 
-    title = map.assign_attrs().long_name.replace(" ", "_") + f' {how:s}'
+    print(fig, cb)
+
+    title = data_map.assign_attrs().long_name.replace(" ", "_") + f' {how:s}'
 
     if suptitle_add_word is not None:
         title = title + ' ' + suptitle_add_word
@@ -2516,24 +3423,27 @@ def plot_geo_map(map: xr.DataArray, bias: int, vmax: np.float = 100, vmin: np.fl
     plt.suptitle(title)
     # tag: additional word added to suptitle
 
-    plt.savefig(f'./plot/{map.name:s}.{title.replace(" ", "_"):s}.png', dpi=220)
+    plt.savefig(f'./plot/{data_map.name:s}.{title.replace(" ", "_"):s}.png', dpi=220)
     plt.show()
     print(f'got plot ')
 
 
-def if_same_coords(map1: xr.DataArray, map2: xr.DataArray, coords_to_check: list = ['lat', 'lon']):
+def if_same_coords(map1: xr.DataArray, map2: xr.DataArray, coords_to_check=None):
     """
     return yes or not if 2 maps in the same coordinates
+    :param coords_to_check:
+    :type coords_to_check:
     :param map2:
     :param map1:
-    :param a:
-    :param b:
     :return:
 
     Parameters
     ----------
     coords_to_check : list of the dims to check
     """
+
+    if coords_to_check is None:
+        coords_to_check = ['lat', 'lon']
 
     coords1 = get_time_lon_lat_from_da(map1)
     coords2 = get_time_lon_lat_from_da(map2)
@@ -2568,17 +3478,14 @@ def read_to_standard_da(file_path: str, var: str):
 
     ds = xr.open_dataset(file_path)
 
-    # # change the names
-    # da_std = da.rename({dims_names['time']: 'time',
-    #                     dims_names['lon']: 'longitude',
-    #                     dims_names['lat']: 'latitude'})
-
     da = ds[var]
     coords = get_time_lon_lat_from_da(da)
 
     new_coords = dict()
 
-    possible_coords = ['time', 'lev', 'lat', 'lon']  # do not change the order
+    possible_coords = ['time', 'number', 'lev', 'lat', 'lon']
+    # do not change the order
+
     for d in possible_coords:
         if d in coords:
             # my_dict['name'] = 'Nick'
@@ -2668,8 +3575,6 @@ def match_station_to_grid_data(df: pd.DataFrame, column: str, da: xr.DataArray):
 
     return matched_da
 
-    print(f'good')
-
 
 def plot_nothing(ax):
     # Hide axis
@@ -2684,7 +3589,7 @@ def plot_nothing(ax):
 
     # plt.tick_params(axis="x", which="both", bottom=False, top=False)
     # plt.tick_params(axis="y", which="both", left=False, right=False)
-    # ax.tick_params(axis=u'both', which=u'both', length=0)
+    # ax.tick_params(axis='both', which='both', length=0)
 
     ax.axes.xaxis.set_visible(False)
     ax.axes.yaxis.set_visible(False)
@@ -2697,17 +3602,25 @@ def plot_nothing(ax):
 
 
 def plot_diurnal_cycle_maps_dataset(list_da: list, bias: int, var_list, hour_list, title: str,
-                                    lonlatbox=[54.8, 58.1, -21.9, -19.5], comment='no comment'):
+                                    lonlatbox=None, comment='no comment'):
     """
     plot diurnal cycle from dataset, the dataArray may have different coords, vmax and vmin, just a function to show
     all the diurnal cycle
+    :param comment:
+    :type comment:
+    :param bias:
+    :type bias:
+    :param list_da:
+    :type list_da:
     :param title:
     :param lonlatbox: default area: SWIO_1km domain
     :param hour_list:
-    :param ds:
     :param var_list:
     :return:
     """
+
+    if lonlatbox is None:
+        lonlatbox = [54.8, 58.1, -21.9, -19.5]
 
     # ----------------------------- filtering data by season -----------------------------
     fig, axs = plt.subplots(ncols=len(hour_list), nrows=len(var_list), sharex='row', sharey='col',
@@ -2790,6 +3703,8 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
                            suptitle_add_word: str = None):
     """
     to compare 2 geo-maps,
+    :param suptitle_add_word:
+    :type suptitle_add_word:
     :param tag2:
     :param tag1:
     :param map1: model, to be remapped if necessary
@@ -2808,7 +3723,7 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     if not if_same_coords(map1, map2, coords_to_check=['lat', 'lon']):
         print(f'coords not same, have to perform remapping to compare...')
         map1 = value_remap_a_to_b(a=map1, b=map2)
-        tag1 = tag1 + f'_remap'
+        tag1 += f'_remap'
 
     fig, axes = plt.subplots(nrows=2, ncols=2, sharex='row', sharey='col',
                              figsize=(10, 10), dpi=220, subplot_kw={'projection': ccrs.PlateCarree()})
@@ -2817,7 +3732,7 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     axes = axes.flatten()
 
     # ----------------------------- map 1 -----------------------------
-    plot_geo_map(map=map1, bias=0, ax=axes[0],
+    plot_geo_map(data_map=map1, bias=0, ax=axes[0],
                  vmax=max(map1.max(), map2.max()), vmin=min(map1.min(), map2.min()))
     axes[0].text(0.93, 0.95, tag1, fontsize=12,
                  horizontalalignment='right', verticalalignment='top', transform=axes[0].transAxes)
@@ -2826,7 +3741,7 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
                  horizontalalignment='right', verticalalignment='bottom', transform=axes[0].transAxes)
 
     # ----------------------------- map 2 -----------------------------
-    plot_geo_map(map=map2, bias=0, ax=axes[1],
+    plot_geo_map(data_map=map2, bias=0, ax=axes[1],
                  vmax=max(map1.max(), map2.max()), vmin=min(map1.min(), map2.min()))
     axes[1].text(0.93, 0.95, tag2, fontsize=12,
                  horizontalalignment='right', verticalalignment='top', transform=axes[1].transAxes)
@@ -2837,7 +3752,7 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     # ----------------------------- plot bias -----------------------------
     bias_map = xr.DataArray(map1.values - map2.values, coords=[map1.lat, map1.lon], dims=map1.dims,
                             name=map1.name, attrs={'units': map1.assign_attrs().units})
-    plot_geo_map(map=bias_map, bias=1, ax=axes[2],
+    plot_geo_map(data_map=bias_map, bias=1, ax=axes[2],
                  vmax=max(np.abs(bias_map.max()), np.abs(bias_map.min())),
                  vmin=min(-np.abs(bias_map.max()), -np.abs(bias_map.min())))
     axes[2].text(0.93, 0.95, f'{tag1:s}-{tag2:s}', fontsize=14,
@@ -2859,7 +3774,7 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
         vmax = 1000
         vmin = -1000
 
-    plot_geo_map(map=bias_in_percent, bias=1, ax=axes[3], vmax=vmax, vmin=vmin)
+    plot_geo_map(data_map=bias_in_percent, bias=1, ax=axes[3], vmax=vmax, vmin=vmin)
     axes[3].text(0.93, 0.95, f'({tag1:s}-{tag2:s})/{tag2:s} %', fontsize=14,
                  horizontalalignment='right', verticalalignment='top', transform=axes[3].transAxes)
 
@@ -2882,6 +3797,26 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     plt.savefig(f'./plot/{map1.name:s}.{title.replace(" ", "_"):s}.{timestamp:s}.png', dpi=220)
     plt.show()
     print(f'got plot ')
+
+
+def convert_df_shifttime(df: pd.DataFrame, second: int):
+    """
+    shift time by second
+    Parameters
+    ----------
+    df :
+    second :
+    Returns
+    -------
+    """
+
+    from datetime import timedelta
+
+    time_shifted = df.index + timedelta(seconds=second)
+
+    new_df = pd.DataFrame(data=df.values, columns=df.columns, index=time_shifted)
+
+    return new_df
 
 
 def convert_da_shifttime(da: xr.DataArray, second: int):
@@ -2929,14 +3864,14 @@ def convert_time_coords_to_datetime(da: xr.DataArray):
 def vis_a_vis_plot(x, y, xlabel: str, ylabel: str, title: str):
     """
     plot scatter plot
+    :param title:
+    :type title:
     :param xlabel:
     :param ylabel:
     :param x:
     :param y:
     :return:
     """
-
-    import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(8, 6), facecolor='w', edgecolor='k', dpi=200)  # figsize=(w,h)
     fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=0.4, top=0.8, wspace=0.05)
@@ -2956,19 +3891,23 @@ def vis_a_vis_plot(x, y, xlabel: str, ylabel: str, title: str):
     plt.show()
 
 
+# noinspection PyUnresolvedReferences
 def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column: str,
-                                altitude_column: str, cbar_label: str,
-                                fig_title: str, bias=False):
+                                cbar_label: str,
+                                bias=False):
     """
     plot station locations and their values
-    :param altitude:
-    :param model:
-    :param obs:
+    :param obs_column:
+    :type obs_column:
+    :param df:
+    :type df:
+    :param cbar_label:
+    :type cbar_label:
+    :param model_column:
+    :type model_column:
     :param bias:
-    :param fig_title:
     :return: map show
     """
-    import matplotlib.pyplot as plt
     import matplotlib as mpl
 
     # data:
@@ -2976,9 +3915,9 @@ def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column:
 
     months = [11, 12, 1, 2, 3, 4]
     month_names = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr']
-    nrows = len(months)
+    # nrows = len(months)
 
-    fig = plt.figure(figsize=(5, 24), dpi=200)
+    plt.figure(figsize=(5, 24), dpi=200)
     # fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=1.5, top=0.95, wspace=0.05)
 
     # plot in each month:
@@ -2989,7 +3928,7 @@ def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column:
         monthly_data = df[df.index.month == months[m]]
         station_group = monthly_data.groupby('station_id')
         station_mean_bias = station_group[['bias']].mean().values[:, 0]
-        station_mean_height = station_group[['altitude']].mean().values[:, 0]
+        # station_mean_height = station_group[['altitude']].mean().values[:, 0]
 
         lon = df['longitude']
         lat = df['latitude']
@@ -3011,8 +3950,9 @@ def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column:
         else:
             cmap = plt.cm.YlOrRd
 
-        vmin = -340
-        vmax = 340
+        # human chosen values
+        # vmin = -340
+        # vmax = 340
 
         bounds = np.linspace(vmin, vmax, n_cbar + 1)
         norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
@@ -3024,8 +3964,6 @@ def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column:
         # ----------------------------- color bar -----------------------------
         cb = plt.colorbar(sc, orientation='horizontal', shrink=0.7, pad=0.1, label=cbar_label)
         cb.ax.tick_params(labelsize=10)
-
-        # ax.xaxis.set_ticks_position('top')
 
         ax.gridlines(draw_labels=False)
 
@@ -3040,38 +3978,39 @@ def plot_altitude_bias_by_month(df: pd.DataFrame, model_column: str, obs_column:
 
 
 def plot_scatter_contourf(lon: xr.DataArray, lat: xr.DataArray, cloud: xr.DataArray, cbar_label: str,
-                          lon_mf: np.ndarray, lat_mf: np.ndarray, value: np.ndarray, cbar_mf: str,
-                          bias=False, bias_mf=True):
+                          lon_mf: np.ndarray, lat_mf: np.ndarray, value: pd.DataFrame, cbar_mf: str,
+                          bias_mf=True):
     """
-    to plot meteofrance stational value and a colorfilled map.
+    to plot meteofrance stationary value and a color filled map.
 
+    :param value:
+    :type value:
+    :param bias_mf:
+    :type bias_mf:
     :param cbar_mf:
     :param lat_mf:
     :param lon_mf:
     :param cloud:
-    :param bias:
     :param cbar_label: label of color bar
     :param lon:
     :param lat:
     :return: map show
     """
 
-    import cartopy.crs as ccrs
-    import cartopy.feature as cfeature
-    import matplotlib.pyplot as plt
     import matplotlib as mpl
     import datetime as dt
 
     hours = [x for x in range(8, 18, 1)]
-    dates = ['2004-11-01', '2004-12-01', '2005-01-01', '2005-02-01', '2005-03-01', '2005-04-01']
-    month_names = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr']
+    # dates = ['2004-11-01', '2004-12-01', '2005-01-01', '2005-02-01', '2005-03-01', '2005-04-01']
+    # month_names = ['Nov', 'Dec', 'Jan', 'Feb', 'Mar', 'Apr']
 
-    fig = plt.figure(figsize=(10, 20), dpi=300)
+    plt.figure(figsize=(10, 20), dpi=300)
     # fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=1.5, top=0.95, wspace=0.05)
 
     # plot in each hour:
     for h in range(len(hours)):
 
+        # noinspection PyTypeChecker
         ax = plt.subplot(len(hours) / 2, 2, h + 1, projection=ccrs.PlateCarree())
 
         print(f'plot hour = {hours[h]:g}')
@@ -3089,14 +4028,14 @@ def plot_scatter_contourf(lon: xr.DataArray, lat: xr.DataArray, cloud: xr.DataAr
         ax.coastlines('50m')
         ax.add_feature(cfeature.LAND.with_scale('10m'))
 
-        # Plot Colorfill of hourly mean cloud fraction
+        # Plot Color fill of hourly mean cloud fraction
         # normalize color to not have too dark of green at the top end
         clevs = np.arange(60, 102, 2)
         cf = ax.contourf(lon, lat, hourly_cloud, clevs, cmap=plt.cm.Greens,
                          norm=plt.Normalize(60, 102), transform=ccrs.PlateCarree())
 
         # cb = plt.colorbar(cf, orientation='horizontal', pad=0.1, aspect=50)
-        cb = plt.colorbar(cf, orientation='horizontal', shrink=0.7, pad=0.05, label=cbar_label)
+        plt.colorbar(cf, orientation='horizontal', shrink=0.7, pad=0.05, label=cbar_label)
         # cb.set_label(cbar_label)
 
         # ----------------------------- hourly mean bias wrf4.1 - mf -----------------------------
@@ -3119,6 +4058,7 @@ def plot_scatter_contourf(lon: xr.DataArray, lat: xr.DataArray, cloud: xr.DataAr
         n_cbar = 20
 
         bounds = np.linspace(vmin, vmax, n_cbar + 1)
+        # noinspection PyUnresolvedReferences
         norm = mpl.colors.BoundaryNorm(bounds, cmap.N)
         # ----------------------------------------------------------
         sc = plt.scatter(lon_mf, lat_mf, c=hourly_bias, edgecolor='black',
@@ -3179,7 +4119,7 @@ def value_lonlatbox_from_area(area: str):
         box = [-24, 59, -47.5, 43.8]
 
     if area == 'SA_swio':
-        box = [0, 110, -50, 10]
+        box = [0, 90, -50, 10]
 
     if area == 'reu':
         box = [55, 56, -21.5, -20.8]
@@ -3215,18 +4155,14 @@ def cluster_mean_gaussian_mixture(var_history, n_components, max_iter, cov_type)
     """
     input days with similar temp profile, return a dataframe with values = most common cluster mean.
 
-    :param day: nd.array(datatime.date)
     :param var_history: pd.DateFrame
-    :param var_similar: pd.DateFrame
     :param n_components:
     :param max_iter:
     :param cov_type:
     :return: pd.DateFrame of DateTimeIndex
     """
 
-    from collections import Counter
     from sklearn.mixture import GaussianMixture
-    from sklearn.neural_network import MLPRegressor
 
     # clustering by Gaussian Mixture
     gm = GaussianMixture(n_components=n_components, max_iter=max_iter, covariance_type=cov_type)
@@ -3267,9 +4203,6 @@ def plot_daily_cluster_mean(mean, locations, labels, ylabel, title):
     plt.title(title)
     # ----------------------------- location of group members -----------------------------
 
-    import cartopy.crs as ccrs
-    import matplotlib as mpl
-
     ax = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
     ax.set_extent([55, 56, -21.5, -20.8], crs=ccrs.PlateCarree())
     ax.coastlines('50m')
@@ -3277,7 +4210,7 @@ def plot_daily_cluster_mean(mean, locations, labels, ylabel, title):
     # ----------------------------- plot cloud fraction from CM SAF -----------------------------
 
     # cloud fraction cover
-    cfc_cmsaf = f'{DIR:s}/local_data/obs/CFC.cmsaf.hour.reu.DJF.nc'
+    cfc_cmsaf = f'~/local_data/obs/CFC.cmsaf.hour.reu.DJF.nc'
     cloud = xr.open_dataset(cfc_cmsaf).CFC
 
     mean_cloud = cloud.mean(dim='time')
@@ -3287,7 +4220,7 @@ def plot_daily_cluster_mean(mean, locations, labels, ylabel, title):
                      norm=plt.Normalize(60, 82), transform=ccrs.PlateCarree(), zorder=1)
 
     # cb = plt.colorbar(cf, orientation='horizontal', pad=0.1, aspect=50)
-    cb = plt.colorbar(cf, orientation='horizontal', shrink=0.7, pad=0.05, label='daily mean cloud fraction CM SAF')
+    plt.colorbar(cf, orientation='horizontal', shrink=0.7, pad=0.05, label='daily mean cloud fraction CM SAF')
 
     # ----------------------------- locations -----------------------------
     # plot location of stations
@@ -3324,6 +4257,18 @@ def plot_cordex_ensemble_monthly_changes_map(past: xr.DataArray, future: xr.Data
     future :
     Returns
     -------
+    :param big_title:
+    :type big_title:
+    :param significance:
+    :type significance:
+    :param past:
+    :type past:
+    :param future:
+    :type future:
+    :param vmin:
+    :type vmin:
+    :param vmax:
+    :type vmax:
 
     """
 
@@ -3363,7 +4308,7 @@ def plot_cordex_ensemble_monthly_changes_map(past: xr.DataArray, future: xr.Data
         plot_geo_subplot_map(geomap=ens_mean[i],
                              vmin=vmin, vmax=vmax,
                              bias=1, ax=axs[i], domain='reu-mau', tag=f'month={i + 1:g}',
-                             statistics=1,
+                             statistics=True,
                              )
 
     # ----------------------------- plot 4: ensemble std
@@ -3382,31 +4327,131 @@ def plot_cordex_ensemble_monthly_changes_map(past: xr.DataArray, future: xr.Data
     print(f'done')
 
 
-def plot_cordex_ensemble_series(ens_da: xr.DataArray, big_title: str):
-    mean = ens_da.mean(dim=['model', 'latitude', 'longitude'])
+def plot_multi_scenario_ensemble_time_series(da: xr.DataArray,
+                                             plot_every_model: int = 0,
+                                             suptitle_add_word: str = '',
+                                             highlight_model_list=None,
+                                             ):
+    """
+    plot time series, the input
+    Args:
+        da (): only have 3 dims: time and number and SSP, with model names in coords
+        suptitle_add_word ():
+        highlight_model_list (): if plot highlight model, so every_model is off.
+        plot_every_model ():
 
-    fig, axs = plt.subplots(figsize=(15, 10), dpi=220)
+    Returns:
+        plot
+    """
+    if highlight_model_list is None:
+        highlight_model_list = []
+    if len(highlight_model_list):
+        plot_every_model = False
 
-    dims = list(mean.dims)
-    dims.remove('time')
+    plt.subplots(figsize=(9, 6), dpi=220)
 
-    n_coord = len(mean[dims[0]])
+    scenario = list(da.SSP.data)
 
-    i_coord = mean[dims[0]].values
-    j_coord = mean[dims[1]].values
+    colors = ['blue', 'darkorange', 'green', 'red']
 
-    linestyles = [['-', '-', '-'], ['--', '--', '--']]
+    x = da.time.dt.year
 
-    linewidths = [[3.0, ] * 3, [4.0, ] * 3]
-    for i in range(2):
-        for j in range(3):
-            label = i_coord[i] + '_' + j_coord[j]
-            plt.plot(mean.time, mean[i, j, :], linestyle=linestyles[i][j],
-                     label=label, linewidth=linewidths[i][j])
+    for s in range(len(scenario)):
 
-            plt.legend(loc='upper right', prop={'size': 14})
+        data = da.sel(SSP=scenario[s]).dropna('number')
+        num = len(data.number)
+        scenario_mean = data.mean('number')
+
+        if plot_every_model:
+            for i in range(len(da.number)):
+
+                model_name = list(da.number.data)[i]
+
+                print(f'{model_name:s}, {str(i + 1):s}/{len(da.number):g} model')
+                model = str(da.number[i].data)
+                data_one_model = da.sel(number=model, SSP=scenario[s])
+
+                plt.plot(x, data_one_model, linestyle='-', linewidth=1.0,
+                         alpha=0.2, color=colors[s], zorder=1)
+
+        else:
+            # plot range of std
+            scenario_std = data.std('number')
+
+            # 95% spread
+            low_limit = np.subtract(scenario_mean, 1.96 * scenario_std)
+            up_limit = np.add(scenario_mean, 1.96 * scenario_std)
+
+            plt.plot(x, low_limit, '-', color=colors[s], linewidth=0.1, zorder=1)
+            plt.plot(x, up_limit, '-', color=colors[s], linewidth=0.1, zorder=1)
+            plt.fill_between(x, low_limit, up_limit, color=colors[s], alpha=0.2, zorder=1)
+
+        if len(highlight_model_list):
+            j = 0
+            for i in range(len(data.number)):
+                model_name = list(data.number.data)[i]
+
+                if model_name in highlight_model_list:
+                    print(f'highlight this model: {model_name:s}')
+                    j += 1
+
+                    data_one_model = da.sel(number=model_name, SSP=scenario[s])
+
+                    plt.plot(x, data_one_model, linestyle=get_linestyle_list()[j][1], linewidth=2.0,
+                             alpha=0.8, label=model_name, color=colors[s], zorder=1)
+
+        plt.plot(x, scenario_mean, label=f'{scenario[s]:s} ({num:g} GCMs)', linestyle='-', linewidth=2.0,
+                 alpha=1, color=colors[s], zorder=2)
+
+    plt.legend(loc='upper left', prop={'size': 14})
+
+    plt.ylim(-10, 10)
+
+    plt.ylabel(f'{da.name:s} ({da.units:s})')
+    plt.xlabel('year')
+    # plt.pause(0.05)
+    # for interactive plot model, do not works for remote interpreter, do not work in not scientific mode.
+
+    title = f'projected changes, 95% multi model spread'
+
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    plt.suptitle(title)
+
+    plt.savefig(f'{title.replace(" ", "_"):s}.every_model_{plot_every_model:g}.png', dpi=300)
 
     plt.show()
+
+
+def get_linestyle_list():
+    """
+    to use like this linestyle=get_linestyle_list()[i][1]
+    Returns:
+
+    """
+    linestyles = [
+        ('solid', 'solid'),  # Same as (0, ()) or '-'
+        ('dotted', 'dotted'),  # Same as (0, (1, 1)) or '.'
+        ('dashed', 'dashed'),  # Same as '--'
+        ('dashdot', 'dashdot'),  # Same as '-.
+        ('loosely dotted', (0, (1, 10))),
+        ('dotted', (0, (1, 1))),
+        ('densely dotted', (0, (1, 1))),
+
+        ('loosely dashed', (0, (5, 10))),
+        ('dashed', (0, (5, 5))),
+        ('densely dashed', (0, (5, 1))),
+
+        ('loosely dashdotted', (0, (3, 10, 1, 10))),
+        ('dashdotted', (0, (3, 5, 1, 5))),
+        ('densely dashdotted', (0, (3, 1, 1, 1))),
+
+        ('dashdotdotted', (0, (3, 5, 1, 5, 1, 5))),
+        ('loosely dashdotdotted', (0, (3, 10, 1, 10, 1, 10))),
+        ('densely dashdotdotted', (0, (3, 1, 1, 1, 1, 1)))]
+
+    return linestyles
 
 
 def plot_cordex_ensemble_changes_map(past: xr.DataArray, mid: xr.DataArray, end: xr.DataArray, big_title: str):
@@ -3425,11 +4470,11 @@ def plot_cordex_ensemble_changes_map(past: xr.DataArray, mid: xr.DataArray, end:
 
     """
 
-    windows = {
-        'past': f'{past.time.dt.year.values[0]:g}-{past.time.dt.year.values[-1]:g}',
-        'mid': f'{mid.time.dt.year.values[0]:g}-{mid.time.dt.year.values[-1]:g}',
-        'end': f'{end.time.dt.year.values[0]:g}-{end.time.dt.year.values[-1]:g}',
-    }
+    # windows = {
+    #     'past': f'{past.time.dt.year.values[0]:g}-{past.time.dt.year.values[-1]:g}',
+    #     'mid': f'{mid.time.dt.year.values[0]:g}-{mid.time.dt.year.values[-1]:g}',
+    #     'end': f'{end.time.dt.year.values[0]:g}-{end.time.dt.year.values[-1]:g}',
+    # }
 
     fig, axs = plt.subplots(nrows=4, ncols=3, sharex='row', sharey='col',
                             figsize=(15, 10), dpi=220, subplot_kw={'projection': ccrs.PlateCarree()})
@@ -3449,10 +4494,10 @@ def plot_cordex_ensemble_changes_map(past: xr.DataArray, mid: xr.DataArray, end:
     end_change = (end - past.assign_coords(time=end.time)).mean(dim=['time', 'model'], keep_attrs=True)
     end_change = end_change.assign_attrs(units=mid.assign_attrs().units)
     # 7
-    emergence = value_time_of_emergence(std=past_ensemble_std, time_series=end_change)
-    # TODO: running mean needed
-    emergence = past_ensemble_std
-    emergence = emergence.assign_attrs(units='time of emergence')
+    # emergence = value_time_of_emergence(std=past_ensemble_std, time_series=end_change)
+    # TODO: running mean needed, to rewrite this function
+    # emergence = past_ensemble_std
+    # emergence = emergence.assign_attrs(units='time of emergence')
 
     # 8,
     past_mean = past.mean(dim=['time', 'model'], keep_attrs=True)
@@ -3479,8 +4524,8 @@ def plot_cordex_ensemble_changes_map(past: xr.DataArray, mid: xr.DataArray, end:
     ]
     # -----------------------------
     # for wind changes the max and min :
-    vmin = [np.min(ensemble_yearmean)] * 3 + [0.2, ] + [-0.3, ] * 2 + [2000, -0.15, -0.25, 0, 0.3, 0.3]
-    vmax = [np.max(ensemble_yearmean)] * 3 + [1.2, ] + [+0.3, ] * 2 + [2100, 0.15, 0.25, 1, 1.2, 1.2]
+    # vmin = [np.min(ensemble_yearmean)] * 3 + [0.2, ] + [-0.3, ] * 2 + [2000, -0.15, -0.25, 0, 0.3, 0.3]
+    # vmax = [np.max(ensemble_yearmean)] * 3 + [1.2, ] + [+0.3, ] * 2 + [2100, 0.15, 0.25, 1, 1.2, 1.2]
     vmin = [3.8, ] * 3 + [0.2, ] + [-0.3, ] * 2 + [2000, -0.15, -0.25, 0, 0.3, 0.3]
     vmax = [9.5, ] * 3 + [1.2, ] + [+0.3, ] * 2 + [2100, 0.15, 0.25, 1, 1.2, 1.2]
     # for wind changes the max and min :
