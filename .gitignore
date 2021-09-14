@@ -3,3 +3,8 @@
 *.temp
 /configs/config.ctang.yaml
 /local_data/domain/.DS_Store
+/.hydra/
+/.github/
+
+*.xml
+
