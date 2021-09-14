@@ -7,6 +7,7 @@ __version__ = f'Version 1.0  \nTime-stamp: <2019-02-21>'
 __author__ = "ChaoTANG@univ-reunion.fr"
 
 import os
+import sys
 from typing import List
 import warnings
 import hydra
@@ -35,6 +36,21 @@ def my_coding_rules():
     print(f'classification file in pd.DataFrame with DateTimeIndex')
     print(f'geo-field in DataArray with good name and units')
     print(f'see the function read_to_standard_da for the standard dim names')
+
+
+# ----------------------------- definition -----------------------------
+
+def get_possible_standard_coords():
+    """
+    that the definition of all project, used by read nc to standard da
+    :return:
+    :rtype:
+    """
+    standard_coords = ['time', 'lev', 'lat', 'lon', 'number']
+    # this definition is used for all projects, that's the best order do not change this
+    # key word: order, dims, coords,
+
+    return standard_coords
 
 
 # -----------------------------
@@ -153,6 +169,23 @@ def convert_multi_da_to_ds(list_da: list, list_var_name: list) -> xr.Dataset:
             ds[list_var_name[i]] = list_da[i]
 
     return ds
+
+
+def read_binary_file(bf: str):
+    """
+    to read binary file
+    :param bf:
+    :type bf:
+    :return:
+    :rtype:
+    """
+
+    # example: f'./local_data/MSG+0415.3km.lon'
+
+    data = np.fromfile(bf, '<f4')  # little-endian float32
+    # data = np.fromfile(bf, '>f4')  # big-endian float32
+
+    return data
 
 
 def convert_ds_to_da(ds: xr.Dataset, varname: str = 'varname') -> xr.DataArray:
@@ -283,6 +316,115 @@ def query_influxdb(cfg: DictConfig, query: str):
     df = df.set_index('DateTime')
 
     return df
+
+
+def plot_wrf_domain(num_dom: int, domain_dir: str):
+    """
+    to plot the domain setting from the output of geogrid.exe
+    Parameters
+    ----------
+    num_dom :
+    domain_dir :
+
+    Returns
+    -------
+    """
+
+    # ----------------------------- Definition:
+    Num_Domain = num_dom
+    Title = 'Domain setting for WRF simulation'
+
+    # ----------------------------- plot a empty map -----------------------------
+    import matplotlib.patches as patches
+    import matplotlib.ticker as mticker
+    from cartopy.mpl.gridliner import LONGITUDE_FORMATTER, LATITUDE_FORMATTER
+
+    fig = plt.figure(figsize=(10, 8), dpi=300)
+    # fig.subplots_adjust(left=0.05, right=0.95, bottom=0.05, hspace=1.5, top=0.95, wspace=0.05)
+
+    ax = plt.subplot(111, projection=ccrs.PlateCarree())
+    # set map
+    swio = value_lonlatbox_from_area('detect')
+    ax.set_extent(swio, crs=ccrs.PlateCarree())
+    # lon_left, lon_right, lat_north, lat_north
+
+    ax.coastlines('50m')
+    ax.add_feature(cfeature.LAND.with_scale('10m'))
+
+    gl = ax.gridlines(crs=ccrs.PlateCarree(), draw_labels=True,
+                      linewidth=1, color='gray', alpha=0.5, linestyle='--')
+    gl.xlabels_top = False
+    gl.ylabels_left = True
+    gl.xlines = True
+    gl.xlocator = mticker.FixedLocator(list(range(0, 100, 2)))
+    gl.ylocator = mticker.FixedLocator(list(range(-90, 90, 2)))
+    gl.xformatter = LONGITUDE_FORMATTER
+    gl.yformatter = LATITUDE_FORMATTER
+    gl.xlabel_style = {'size': 12, 'color': 'gray'}
+    gl.xlabel_style = {'size': 10, 'color': 'black'}
+    # ----------------------------- end of plot a empty map -----------------------------
+
+    # swio:
+    # resolution = [27, 9, 3, 1]
+    # Poovanum:
+    # resolution = [10, 2, 0.4, 0.4]
+    # Chandra:
+    # resolution = [27, 9, 3, 1]
+    # detect
+    resolution = [27, 9, 3, 1]
+
+    colors = ['black', 'blue', 'green', 'red']
+
+    resolution = resolution[4 - Num_Domain:]
+    colors = colors[4 - Num_Domain:]
+
+    for d in range(Num_Domain):
+        # ----------------------------- read domains -----------------------------
+        # swio:
+        nc_file = f'{domain_dir:s}/geo_em.d0{d + 1:g}.nc'
+
+        # Poovanum:
+        # nc_file = f'{DATA_DIR:s}/Poovanum/geo_em.d0{d + 1:g}.nc'
+        # Chandra:
+        # nc_file = f'{DATA_DIR:s}/Chandra/domain/geo_em.d0{d + 1:g}.nc'
+
+        lat = xr.open_dataset(nc_file).CLAT
+        lon = xr.open_dataset(nc_file).CLONG
+        # map_factor = xr.open_dataset(nc_file).MAPFAC_M
+        height = lat.max() - lat.min()
+        width = lon.max() - lon.min()
+        # --------------------- plot the domains ------------------------------
+
+        p = patches.Rectangle((lon.min(), lat.min()), width, height,
+                              fill=False, alpha=0.9, lw=2, color=colors[d])
+        ax.add_patch(p)
+
+        # domain names and resolution:
+        plt.text(lon.max() - 0.05 * width, lat.max() - 0.05 * height,
+                 f'd0{d + 1:g}: {resolution[d]:g}km',
+                 fontsize=8, fontweight='bold', ha='right', va='top', color=colors[d])
+        # grid points:
+
+        plt.text(lon.min() + 0.5 * width, lat.min() + 0.01 * height,
+                 f'({lon.shape[2]:g}x{lat.shape[1]})',
+                 fontsize=8, fontweight='bold', ha='center', va='bottom', color=colors[d])
+
+    aladin_domain = 0
+
+    if aladin_domain:
+        # add ALADIN domain:
+        #  [34°E-74°E ; 2°S-28°S]:
+        p1 = patches.Rectangle((34, -28), 40, 26, fill=False, alpha=0.9, lw=2, color='black')
+        ax.add_patch(p1)
+
+        plt.text(64, -29, f'ALADIN domain @12km', fontsize=8, fontweight='bold', ha='center', va='bottom',
+                 color='black')
+
+    plt.grid(True)
+    plt.title(Title, fontsize=12, fontweight='bold')
+    plt.show()
+
+    return fig
 
 
 # noinspection PyUnresolvedReferences
@@ -540,21 +682,28 @@ def anomaly_daily(da: xr.DataArray) -> xr.DataArray:
     return return_anomaly
 
 
-def anomaly_hourly(da: xr.DataArray) -> xr.DataArray:
+def anomaly_hourly(da: xr.DataArray, percent: int = 0) -> xr.DataArray:
     """
     calculate hourly anomaly, as the name, from the xr.DataArray
     if the number of year is less than 30, better to smooth out the high frequency variance.
     :param da:
-    :return:
+    :param percent: output in percentage
+    :return: da with a coordinate named 'strftime' but do not have this dim
     """
 
     if len(set(da.time.dt.year.values)) < 30:
         warnings.warn('CTANG: input less than 30 years ... better to smooth out the high frequency variance, '
                       'for more see project Mialhe_2020/src/anomaly.py')
 
-    print('calculating hourly anomaly ... ')
+    print(f'calculating hourly anomaly ... {da.name:s}')
+    # todo: print out the var name
 
-    anomaly = da.groupby(da.time.dt.strftime('%m-%d-%H')) - da.groupby(da.time.dt.strftime('%m-%d-%H')).mean('time')
+    if percent:
+        anomaly = (da.groupby(da.time.dt.strftime('%m-%d-%H')) -
+                   da.groupby(da.time.dt.strftime('%m-%d-%H')).mean('time')) / \
+                  da.groupby(da.time.dt.strftime('%m-%d-%H')).mean('time')
+    else:
+        anomaly = da.groupby(da.time.dt.strftime('%m-%d-%H')) - da.groupby(da.time.dt.strftime('%m-%d-%H')).mean('time')
 
     return_anomaly = anomaly.assign_attrs({'units': da.assign_attrs().units, 'long_name': da.assign_attrs().long_name})
 
@@ -575,12 +724,27 @@ def remove_duplicate_list(mylist: list) -> list:
     return list_return
 
 
-def plot_geo_subplot_map(geomap, vmin, vmax, bias, ax, domain: str, tag: str, statistics: bool = 1):
+def plot_geo_subplot_map(geomap, vmin, vmax, bias, ax,
+                         domain: str, tag: str,
+                         plot_cbar: bool = True,
+                         statistics: bool = 1):
     """
-    plot subplot of geo map
-    Returns
-    -------
+    plot subplot
+    Args:
+        geomap ():
+        vmin ():
+        vmax ():
+        bias ():
+        ax ():
+        domain ():
+        tag ():
+        plot_cbar ():
+        statistics ():
+
+    Returns:
+
     """
+
     plt.sca(ax)
     # active this subplot
 
@@ -594,29 +758,29 @@ def plot_geo_subplot_map(geomap, vmin, vmax, bias, ax, domain: str, tag: str, st
     cf: object = ax.contourf(geomap.lon, geomap.lat, geomap, levels=norm.boundaries,
                              cmap=cmap, norm=norm, transform=ccrs.PlateCarree(), extend='both')
 
-    cbar_label = f'{geomap.name:s} ({geomap.assign_attrs().units:s})'
-    plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, label=cbar_label)
+    if plot_cbar:
+        cbar_label = f'{geomap.name:s} ({geomap.assign_attrs().units:s})'
+        plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, label=cbar_label)
 
     ax.text(0.9, 0.95, f'{tag:s}', fontsize=12,
             horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
 
     if statistics:
-        ax.text(0.95, 0.1, f'mean = {geomap.mean().values:4.2f}', fontsize=12,
-                horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+        ax.text(0.95, 0.05, f'mean = {geomap.mean().values:4.2f}', fontsize=10,
+                horizontalalignment='right', verticalalignment='bottom', transform=ax.transAxes)
+
+    return cf
 
 
 def get_data_in_classif(da: xr.DataArray, df: pd.DataFrame, significant: bool = 0, time_mean: bool = 0):
     """
-    to get a new da with additional dim of classification df
+    to get a new da with additional dim of classification df da and df may NOT in the same length of time.
+    Note that, this will produce a lot of nan if a multi time steps are not belonging to the same class.
     :param time_mean:
-    :type time_mean:
     :param significant:
-    :type significant:
-    :param da: with DataTimeIndex
-    :type da:
+    :param da: with DataTimeIndex,
     :param df: class with DataTimeIndex
-    :type df:
-    :return: in shape of (:,:,n_class)
+    :return: in shape of (:,:,class)
     :rtype: da with additional dim named with class number
     """
 
@@ -638,6 +802,7 @@ def get_data_in_classif(da: xr.DataArray, df: pd.DataFrame, significant: bool = 
         if significant:
             sig_map = value_significant_of_anomaly_2d_mask(field_3d=class_1)
             class_1 = filter_2d_by_mask(class_1, mask=sig_map)
+            # class_1 is the only significant values of all the time steps in one class.
 
         if i == 0:
             data_in_class = class_1
@@ -691,35 +856,265 @@ def convert_unit_era5_flux(flux: xr.DataArray, is_ensemble: bool = 0):
     return da
 
 
+def plot_cyclone_in_classif(classif: pd.DataFrame,
+                            radius: float = 3,
+                            cen_lon: float = 55.5,
+                            cen_lat: float = -21.1,
+                            suptitle_add_word: str = ''
+                            ):
+    """
+    to plot classification vs cyclone
+    Args:
+        cen_lat ():
+        cen_lon ():
+        radius ():
+        classif (): classification in df with DateTimeIndex, and only one column of 'class',
+                    the column name could be any string
+        suptitle_add_word ():
+
+    Returns:
+        maps with cyclone path
+
+    """
+
+    # read cyclone
+    cyclone_file = f'~/local_data/cyclones.2.csv'
+    cyc = pd.read_csv(cyclone_file)
+    cyc['Datetime'] = pd.to_datetime(cyc['DAT'])
+    df_cyclone = cyc.set_index('Datetime')
+
+    # ----------------------------- get definitions -----------------------------
+    class_names = list(set(classif.values.ravel()))
+    n_class = len(class_names)
+
+    lat_min = cen_lat - radius
+    lat_max = cen_lat + radius
+
+    lon_min = cen_lon - radius
+    lon_max = cen_lon + radius
+
+    print(f'plot cyclone within {int(radius): g} degree ...')
+    # ----------------------------- prepare fig -----------------------------
+    fig, axs = plt.subplots(nrows=3, ncols=3, sharex='row', sharey='col', figsize=(12, 10), dpi=220,
+                            subplot_kw={'projection': ccrs.PlateCarree()})
+    fig.subplots_adjust(left=0.1, right=0.85, bottom=0.12, top=0.9, wspace=0.09, hspace=0.01)
+    axs = axs.ravel()
+
+    # plot in class
+    for c in range(n_class):
+        c_name = class_names[c]
+        print(f'plot class = {str(c_name):s}')
+
+        class_one: pd.DataFrame = classif[classif == c_name].dropna()
+
+        # ----------------------------- plotting -----------------------------
+        ax = axs[c]
+        plt.sca(axs[c])  # active this subplot
+        set_basemap(area='m_r_m', ax=ax)
+
+        total = 0
+        # loop of day from classification:
+        for i in range(len(class_one)):
+            all_cyc_1day = df_cyclone[df_cyclone.index.date == class_one.index.date[i]]
+            # could be one or more cyclone, so length < 4 * n_cyc
+
+            if len(all_cyc_1day) < 1:  # if no cycle that day:
+                pass
+            else:  # if with cyclone records, one or more
+
+                name = all_cyc_1day['NOM_CYC']
+                # name could be the length > 1, since the cyclone file is 6-hourly.
+
+                # sometimes there are 2 cyclones at the same day:
+                cyclone_name_1day = set(list(name.values))
+                num_cyclone_1day = len(cyclone_name_1day)
+                if num_cyclone_1day > 1:
+                    print(f'got more than one cyclones in one day')
+
+                # to see if these cyclones pass within the $radius
+                for cyc in cyclone_name_1day:
+
+                    cyc_day = all_cyc_1day[all_cyc_1day['NOM_CYC'] == cyc]
+
+                    lat1 = cyc_day[cyc_day['NOM_CYC'] == cyc]['LAT']
+                    lon1 = cyc_day[cyc_day['NOM_CYC'] == cyc]['LON']
+
+                    # if @ reunion
+                    record_in_radius = 0
+                    for record in range(len(lat1)):
+                        if lat_min <= lat1[record] <= lat_max:
+                            if lon_min <= lon1[record] <= lon_max:
+                                record_in_radius += 1
+
+                    if record_in_radius > 0:
+                        # add this cyclone in today (do this in every day if satisfied)
+                        total += 1
+                        # plot path (up to 6 points) if one or more of these 6hourly records is within a radius
+                        plt.plot(lon1, lat1, marker='.', label='path within a day')  # only path of the day
+                        # plt.legend(loc='lower left', prop={'size': 8})
+
+                        # full_path of this cyclone
+                        # full_path_cyc = df_cyclone[df_cyclone['NOM_CYC'] == cyc]
+                        # plt.plot(full_path_cyc['LON'], full_path_cyc['LAT'])
+
+                        # output this cyclone:
+                        print(i, total, record_in_radius, cyc_day)
+
+        # ----------------------------- end of plot -----------------------------
+
+        plt.title(f'#{c + 1:g}')
+        ax.text(0.96, 0.95, f'cyclone@reu={total:g}\n'
+                            f'total_day={len(class_one):g}\n'
+                            f'{100 * total / len(class_one):4.1f}%',
+                fontsize=12, horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
+
+        ax.text(0.06, 0.01, f'plot only the path within a day',
+                fontsize=12, horizontalalignment='left', verticalalignment='bottom', transform=ax.transAxes)
+
+        # ----------------------------- end of plot -----------------------------
+    title = f'cyclone within {radius:g} degree of Reunion'
+
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    fig.suptitle(title)
+    plt.savefig(f'./plot/{title.replace(" ", "_"):s}.radius_{radius:g}.deg'
+                f'.png', dpi=300)
+
+    plt.show()
+    print(f'got plot')
+
+
+def select_nearby_cyclone(cyc_df: pd.DataFrame,
+                          lon_name: str = 'lon',
+                          lat_name: str = 'lat',
+                          radius: float = 3,
+                          cen_lon: float = 55.5,
+                          cen_lat: float = -21.1
+                          ):
+    """
+    from cyclone record select nearby events
+    Args:
+        cyc_df ():
+        lon_name ():
+        lat_name ():
+        radius ():
+        cen_lon ():
+        cen_lat ():
+
+    Returns:
+        df (): only nearby records
+
+    key word: selecting, DataFrame, lonlat, radius, nearby, cyclone, df
+    applied_project: Mialhe_2020
+    """
+
+    df = cyc_df.loc[
+        (cyc_df[lat_name] >= cen_lat - radius) &
+        (cyc_df[lat_name] <= cen_lat + radius) &
+        (cyc_df[lon_name] >= cen_lon - radius) &
+        (cyc_df[lon_name] <= cen_lon + radius)
+        ]
+
+    return df
+
+
+def plot_diurnal_boxplot_in_classif(classif: pd.DataFrame, field_1D: xr.DataArray,
+                                    suptitle_add_word: str = '',
+                                    anomaly: int = 0,
+                                    percent: int = 0,
+                                    plot_big_data_test: int = 1):
+    """
+
+    Args:
+        classif ():
+        field_1D (): dims = time, in this func by 'data_in_class', get da in 'time' & 'class'
+
+        suptitle_add_word ():
+        anomaly (int): 0
+        percent (int): 0 calculate relative anomaly
+        plot_big_data_test ():
+
+    Returns:
+
+    Applied_project:
+        Mialhe_2020
+    """
+    # ----------------------------- data -----------------------------
+    data_in_class = get_data_in_classif(da=field_1D, df=classif, time_mean=False, significant=0)
+
+    # to convert da to df: for the boxplot:
+    print(f'convert DataArray to DataFrame ...')
+    df = data_in_class.to_dataframe()
+    df['Hour'] = df._get_label_or_level_values('time').hour
+    df['Class'] = df._get_label_or_level_values('class')
+    # key word: multilevel index, multi index
+
+    # ----------------------------- get definitions -----------------------------
+    class_names = list(set(classif.values.ravel()))
+    n_class = len(class_names)
+
+    # ----------------------------- plot -----------------------------
+    fig, ax = plt.subplots(nrows=1, ncols=1, figsize=(9, 6), facecolor='w', edgecolor='k', dpi=300)
+
+    seaborn.boxplot(x='Hour', y=data_in_class.name, hue='Class', data=df, ax=ax,
+                    showmeans=False, showfliers=False)
+    # Seaborn's showmeans=True argument adds a mark for mean values in each box.
+    # By default, mean values are marked in green color triangles.
+
+    if anomaly:
+        plt.axhline(y=0.0, color='r', linestyle='-', zorder=-5)
+
+    if percent:
+        ax.set_ylim(-0.2, 0.2)
+    else:
+        ax.set_ylim(-120, 120)
+
+    title = f'{field_1D.assign_attrs().long_name:s} percent={percent:g} anomaly={anomaly:g} in class'
+
+    if suptitle_add_word is not None:
+        title = title + ' ' + suptitle_add_word
+
+    fig.suptitle(title)
+
+    # ----------------------------- end of plot -----------------------------
+
+    plt.savefig(f'./plot/diurnal.{title.replace(" ", "_"):s}.'
+                f'test_{plot_big_data_test:g}.png', dpi=300)
+
+    plt.show()
+    print(f'got plot ')
+
+
 def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArray,
                                         area: str, vmax, vmin,
                                         bias: bool = True,
                                         plot_wind: bool = 0,
                                         only_significant_points: bool = 0,
-                                        suptitle_add_word: str = ''):
-
+                                        suptitle_add_word: str = '',
+                                        plot_big_data_test: int = 1):
     """
-    diurnal field in classification, data are processed before input to this question
-    :param classif:
-    :type classif:
-    :param field:
-    :type field:
-    :param area:
-    :type area:
-    :param vmax:
-    :type vmax:
-    :param vmin:
-    :type vmin:
-    :param bias:
-    :type bias:
-    :param plot_wind:
-    :type plot_wind:
-    :param only_significant_points:
-    :type only_significant_points:
-    :param suptitle_add_word:
-    :type suptitle_add_word:
-    :return:
-    :rtype:
+        diurnal field in classification, data are processed before input to this question
+    note:
+        sfc circulation from era5 @27km, not anomaly, to show sea/land breeze during a day.
+        the field, such as rsds, will be hourly anomaly, in one class, value at one hour - multiyear
+        seasonal hourly mean, (%m-%d-%h), which is the difference between in-class value and all-day value.
+    Args:
+        classif (pandas.core.frame.DataFrame): DatetimeIndex with class name (1,2,3...)
+        field (xarray.core.dataarray.DataArray): with time dim. field may in different days of classif,
+            it will be selected by the available classif day by internal function.
+        area (str):
+        vmax (int):
+        vmin (int):
+        bias (bool):
+        plot_wind (int):
+        only_significant_points (int):
+        suptitle_add_word (str):
+        plot_big_data_test (int): if apply the data filter defined inside the function to boost the code,
+            usually defined in the project level in the config file.
+
+    Returns:
+
     """
 
     # ----------------------------- data -----------------------------
@@ -733,7 +1128,7 @@ def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArr
     hours = list(set(field.time.dt.hour.data))
     n_hour = len(hours)
 
-    class_column_name = classif.columns.to_list()[0]
+    # class_column_name = classif.columns.to_list()[0]
 
     fig, axs = plt.subplots(nrows=n_class, ncols=n_hour, sharex='row', sharey='col',
                             figsize=(19, 10), dpi=300, subplot_kw={'projection': ccrs.PlateCarree()})
@@ -750,24 +1145,19 @@ def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArr
             plt.sca(axs[cls, hour])
             ax = axs[cls, hour]
 
-            plot_geo_subplot_map(geomap=hourly_mean.sel(hour=hours[hour]),
-                                 vmax=vmax, vmin=vmin, bias=bias,
-                                 ax=ax, domain=area, tag=f'local time {hours[hour]:g}')
+            cf = plot_geo_subplot_map(geomap=hourly_mean.sel(hour=hours[hour]),
+                                      vmax=vmax, vmin=vmin, bias=bias,
+                                      plot_cbar=False,
+                                      statistics=0,
+                                      ax=ax, domain=area, tag='')
 
-            # ax.text(0.02, 0.95, f'phase {cls+1:g}', fontsize=8,
-            #         horizontalalignment='left', verticalalignment='top', transform=ax.transAxes)
-            # ax.text(0.95, 0.95, f'{season_tag:s}', fontsize=8,
-            #         horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
-            # ax.text(0.01, 0.15, f'{filtering:s}', fontsize=8,
-            #         horizontalalignment='left', verticalalignment='top', transform=ax.transAxes)
-            #
-            # if cls == 0:
-            #     ax.set_title(f'{hour + 4:g}H00')
-            # if h == 0:
-            #     ax.set_ylabel(f'Class_{cls + 1:g}')
-            #     plt.ylabel(f'Class {cls + 1:g}')
+            if cls == 0:
+                ax.set_title(f'{hours[hour]:g}H00')
+            if hour == 0:
+                ax.set_ylabel(f'Class_{str(class_names[cls]):s}')
+                plt.ylabel(f'Class_{str(class_names[cls]):s}')
 
-            # ----------------------------- surface wind -----------------------------
+    # ----------------------------- surface wind -----------------------------
     if plot_wind:
         print(f'plot surface wind ...')
 
@@ -775,23 +1165,32 @@ def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArr
         warnings.warn('CTANG: load data from 1999-2016, make sure that the data period is correct,'
                       ' check and check it again')
 
-        local_data = '/Users/ctang/local_data/era5'
-        u = read_to_standard_da(f'{local_data:s}/u10/u10.hourly.1999-2016.swio.day.nc', 'u10')
-        v = read_to_standard_da(f'{local_data:s}/v10/v10.hourly.1999-2016.swio.day.nc', 'v10')
+        local_data = '/Users/ctang/local_data/era5/Mialhe_2020'
+        # u = read_to_standard_da(f'{local_data:s}/'
+        #                         f'u10.hourly.era5_land.1981-2018.{area:s}.NDJF.local_day_time.nc', 'u10')
+        # v = read_to_standard_da(f'{local_data:s}/'
+        #                         f'v10.hourly.era5_land.1981-2018.{area:s}.NDJF.local_day_time.nc', 'v10')
+        u = read_to_standard_da(f'{local_data:s}/'
+                                f'u10.hourly.era5.1979-2018.{area:s}.NDJF.local_day_time.nc', 'u10')
+        v = read_to_standard_da(f'{local_data:s}/'
+                                f'v10.hourly.era5.1979-2018.{area:s}.NDJF.local_day_time.nc', 'v10')
+        # classif OLR is from 1979 to 2018.
 
-        u = anomaly_hourly(u)
-        v = anomaly_hourly(v)
+        if plot_big_data_test:
+            u = u.sel(time=slice('19990101', '20001201'))
+            v = v.sel(time=slice('19990101', '20001201'))
 
         u_in_class = get_data_in_classif(u, classif, significant=False, time_mean=False)
         v_in_class = get_data_in_classif(v, classif, significant=False, time_mean=False)
 
         for cls in range(n_class):
-            print(f'plot class = {cls + 1:g}')
+            print(f'plot wind in class = {cls + 1:g}')
 
             u_in_1class = u_in_class.where(u_in_class['class'] == class_names[cls], drop=True).squeeze()
             v_in_1class = v_in_class.where(v_in_class['class'] == class_names[cls], drop=True).squeeze()
-            u_hourly_mean = u_in_class.groupby(u_in_class.time.dt.hour).mean()
-            v_hourly_mean = v_in_class.groupby(v_in_class.time.dt.hour).mean()
+
+            u_hourly_mean = u_in_1class.groupby(u_in_1class.time.dt.hour).mean()
+            v_hourly_mean = v_in_1class.groupby(v_in_1class.time.dt.hour).mean()
 
             for hour in range(n_hour):
                 plt.sca(axs[cls, hour])
@@ -800,58 +1199,20 @@ def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArr
                 u_1hour = u_hourly_mean.sel(hour=hours[hour])
                 v_1hour = v_hourly_mean.sel(hour=hours[hour])
 
+                plot_wind_subplot(area='bigreu',
+                                  lon=u_1hour.lon, lat=v_1hour.lat,
+                                  u=u_1hour,
+                                  v=v_1hour,
+                                  ax=ax, bias=0)
 
-                # speed = np.sqrt(u10 ** 2 + v10 ** 2)
-                # speed = speed.rename('10m_wind_speed').assign_coords({'units': u10.attrs['units']})
+    # ----------------------------- end of plot -----------------------------
+    cbar_label = f'{field.name:s} ({field.assign_attrs().units:s})'
+    cb_ax = fig.add_axes([0.87, 0.2, 0.01, 0.7])
+    plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, cax=cb_ax, label=cbar_label)
 
-                # Set up parameters for quiver plot. The slices below are used to subset the data (here
-                # taking every 4th point in x and y). The quiver_kwargs are parameters to control the
-                # appearance of the quiver so that they stay consistent between the calls.
-
-                if area == 'bigreu':
-                    n_sclice = None
-                    headlength = 5
-                    headwidth = 8
-
-                    if bias == 0:
-                        n_scale = 3
-                        key = 10
-                    else:
-                        n_scale = 3
-                        key = 0.5
-
-                if area == 'SA_swio':
-                    headlength = 5
-                    headwidth = 3
-                    n_sclice = 8
-
-                    if bias == 0:
-                        n_scale = 3
-                        key = 10
-                    else:
-                        n_scale = 0.3
-                        key = 1
-
-                quiver_slices = slice(None, None, n_sclice)
-                quiver_kwargs = {'headlength': headlength,
-                                 'headwidth': headwidth,
-                                 'angles': 'uv', 'units': 'xy',
-                                 'scale': n_scale}
-                # a smaller scale parameter makes the arrow longer.
-
-                # plot in subplot:
-                circulation = ax.quiver(u_1hour.lon.values[quiver_slices],
-                                            u_1hour.lat.values[quiver_slices],
-                                            u_1hour.values[quiver_slices, quiver_slices],
-                                            v_1hour.values[quiver_slices, quiver_slices],
-                                            color='blue', zorder=2, **quiver_kwargs)
-
-                ax.quiverkey(circulation, 0.08, 0.90, key, f'{key:g}' + r'$ {m}/{s}$',
-                                 labelpos='E',
-                                 coordinates='axes')
-
-                # ----------------------------- end of plot -----------------------------
-    suptitle_add_word += ' (surface wind)'
+    # ----------------------------- title -----------------------------
+    if plot_wind:
+        suptitle_add_word += ' (surface wind)'
 
     title = f'{field.assign_attrs().long_name:s} in class'
 
@@ -862,17 +1223,86 @@ def plot_diurnal_cycle_field_in_classif(classif: pd.DataFrame, field: xr.DataArr
 
     # ----------------------------- end of plot -----------------------------
 
-    # cbar_label = f'{var:s} ({field.assign_attrs().units:s})'
-    # cb_ax = fig.add_axes([0.87, 0.2, 0.01, 0.7])
-    # cb = plt.colorbar(cf, orientation='vertical', shrink=0.8, pad=0.05, cax=cb_ax, label=cbar_label)
-    #
-    # title = field.assign_attrs().long_name.replace(" ", "_") + f'_anomaly'
-    # plt.suptitle(title + f'in MJO phase\n(hourly data - multiyear hourly mean)')
-    #
-    # plt.savefig(f'{WORKING_DIR:s}/plot/hourly_mean.{var:s}.{statistic:s}.in_{season:s}.{area:s}.'
-    #             f'sig_{only_significant_points:g}.filter_{filter:g}.mjo_phase.png', dpi=200)
+    plt.savefig(f'./plot/hourly_mean.{field.name:s}.in_class.{area:s}.'
+                f'wind_{plot_wind:g}.only_sig_{only_significant_points:g}.'
+                f'test_{plot_big_data_test:g}.png', dpi=300)
     plt.show()
     print(f'got plot ')
+
+
+def plot_wind_subplot(area: str,
+                      lon: xr.DataArray, lat: xr.DataArray,
+                      u: xr.DataArray, v: xr.DataArray,
+                      ax, bias: int = 0):
+    """
+    to plot circulation to a subplot
+    Args:
+        area ():
+        lon ():
+        lat ():
+        u ():
+        v ():
+        ax ():
+        bias (int):
+
+    Returns:
+
+    """
+
+    # speed = np.sqrt(u10 ** 2 + v10 ** 2)
+    # speed = speed.rename('10m_wind_speed').assign_coords({'units': u10.attrs['units']})
+
+    # Set up parameters for quiver plot. The slices below are used to subset the data (here
+    # taking every 4th point in x and y). The quiver_kwargs are parameters to control the
+    # appearance of the quiver so that they stay consistent between the calls.
+
+    if area == 'bigreu':
+        n_sclice = None
+        headlength = 5
+        headwidth = 8
+
+        if bias == 0:
+            n_scale = 12
+            key = 2
+            # set the n_scale to define vector length, and key for sample vector in m/s
+        else:
+            n_scale = 3
+            key = 0.5
+
+    if area == 'SA_swio':
+        headlength = 5
+        headwidth = 3
+        n_sclice = 8
+
+        if bias == 0:
+            n_scale = 3
+            key = 10
+        else:
+            n_scale = 0.3
+            key = 1
+
+    quiver_slices = slice(None, None, n_sclice)
+    quiver_kwargs = {'headlength': headlength,
+                     'headwidth': headwidth,
+                     'angles': 'uv', 'units': 'xy',
+                     'scale': n_scale}
+    # a smaller scale parameter makes the arrow longer.
+
+    circulation = ax.quiver(lon.values[quiver_slices],
+                            lat.values[quiver_slices],
+                            u.values[quiver_slices, quiver_slices],
+                            v.values[quiver_slices, quiver_slices],
+                            linewidth=1.01, edgecolors='k',
+                            # linewidths is only for controlling the outline thickness,
+                            # when an outline of a different color is explicitly requested.
+                            # it looks like you have to explicitly set the edgecolors kwarg
+                            # to get what you want now
+                            color='blue', zorder=2, **quiver_kwargs)
+
+    ax.quiverkey(circulation, 0.08, 0.90, key, f'{key:g}' + r'$ {m}/{s}$',
+                 labelpos='E',
+                 coordinates='axes')
+    # ----------------------------- end of plot wind -----------------------------
 
 
 def plot_field_in_classif(field: xr.DataArray, classif: pd.DataFrame,
@@ -1651,6 +2081,7 @@ def get_T_value(conf_level: float = 0.05, dof: int = 10):
     else:
         return T_value[dof - 1]
 
+
 # ===================================================
 # one tail t test table:
 # dof       0.90    0.95   0.975    0.99   0.995   0.999
@@ -2116,32 +2547,6 @@ def print_data(data, dim: int = 2):
                 print(data[i, j])
 
 
-def filter_3d_by_list_date(data: xr.DataArray, dates: np.ndarray):
-    """
-    filter 3d (time, lon, lat) data, by list/array of datetime.date objects
-    :param dates:
-    :type dates:
-    :param data:
-    :return:
-    """
-
-    data = data.load()
-
-    if isinstance(data, xr.DataArray) or isinstance(data, xr.Dataset):
-
-        for i in range(dates.shape[0]):
-            date = dates[i]
-            selected = data.sel(time=str(date))
-            if i == 0:
-                first_day = selected
-            else:
-                first_day = xr.concat([first_day, selected], dim='time')
-
-            print(f'selecting day = {i + 1:g} of {dates.shape[0]:g}')
-
-    return first_day
-
-
 def read_mjo(match_ssr_avail_day: bool = 0):
     """
     to read mjo phase
@@ -2345,6 +2750,61 @@ def data_filter_by_key_limit_value(data, key: str, how: str, value: float):
     return return_data
 
 
+def reduce_ndim_coord(coord: xr.DataArray, dim_name: str, random: bool = True,
+                      max_check_len: int = 500, check_ratio: float = 0.1):
+    """
+    to check if the input da, usually a coord or dim of a geo map, is static or not,
+    if it's static try to reduce the num of dim of this coord
+
+    :param max_check_len:
+    :type max_check_len:
+    :param dim_name: to check if this dim is change as a function of others
+    :type dim_name: such as 'south_north' if the input coord is lon
+    :param check_ratio: percentage of the total size, for check if random is True
+    :type check_ratio:
+    :param coord: input coord such as lon or lat
+    :type coord:
+    :param random: to use random data, 10 percent of the total data
+    :type random:
+    :return: ndim-reduced coord as da
+    :rtype:
+    """
+
+    original_coord = coord
+    check_coord = coord
+
+    other_dim = list(original_coord.dims)
+    other_dim.remove(dim_name)
+
+    check_coord = check_coord.stack(new_dim=other_dim)
+
+    if random:
+        from random import randint
+        check_len = int(min(check_coord.shape[0] * check_ratio, max_check_len))
+        check_index = [randint(0, check_len - 1) for x in range(check_len)]
+
+        # select some sample to boost
+        check_coord = check_coord.isel(new_dim=check_index)
+
+    # starting to check if dim of dim_name is changing as a function of other_dims
+    check_coord = check_coord.transpose(..., dim_name)
+
+    diff = 0
+    for i in range(check_coord.shape[0]):
+        if np.array_equal(check_coord[i], check_coord[0]):
+            pass
+        else:
+            diff += 1
+            print('not same: ', i)
+            print(f'random number is ', check_index)
+
+    if diff:
+        return original_coord
+    else:
+        # every lon, such as lon[i, :] is the same
+        return check_coord[0]
+
+
 def get_time_lon_lat_from_da(da: xr.DataArray):
     """
 
@@ -2356,32 +2816,26 @@ def get_time_lon_lat_from_da(da: xr.DataArray):
     -------
     dict :     return {'time': time, 'lon': lon, 'lat': lat, 'number': number}
     """
-    coords_names: dict = get_time_lon_lat_name_from_da(da)
+    coords_names: dict = get_time_lon_lat_name_from_da(da, name_from='coords')
     # attention: here the coords names maybe the dim names, if coords is missing in the *.nc file.
 
     coords = dict()
 
-    if 'lon' in coords_names:
-        lon = da[coords_names['lon']].values
+    for lonlat in ['lon', 'lat']:
+        if lonlat in coords_names:
+            lon_or_lat: xr.DataArray = da[coords_names[lonlat]]
 
-        if lon.ndim == 2:
-            lon = lon[0]
-        # for WRF out, it has 3 dims (time, lon, lat), even they are the same
-        if lon.ndim == 3:
-            lon = lon[0, 0]
-        lon = np.array([x - 360 if x > 180 else x for x in lon])
+            if lon_or_lat.ndim == 1:
+                lon_or_lat = lon_or_lat.values
 
-        coords.update(lon=lon)
+            if lon_or_lat.ndim > 1:
+                dim_names = get_time_lon_lat_name_from_da(lon_or_lat, name_from='dims')
+                lon_or_lat = reduce_ndim_coord(coord=lon_or_lat, dim_name=dim_names[lonlat], random=True).values
 
-    if 'lat' in coords_names:
-        lat = da[coords_names['lat']].values
-        if lat.ndim == 2:
-            lat = lat[:, 0]
-        # for WRF out, it has 3 dims (time, lat, lat), even they are the same
-        if lat.ndim == 3:
-            lat = lat[0, :, 0]
+            if lonlat == 'lon':
+                lon_or_lat = np.array([x - 360 if x > 180 else x for x in lon_or_lat])
 
-        coords.update(lat=lat)
+            coords[lonlat] = lon_or_lat
 
     if 'time' in coords_names:
         time = da[coords_names['time']].values
@@ -2398,12 +2852,14 @@ def get_time_lon_lat_from_da(da: xr.DataArray):
     return coords
 
 
-def get_time_lon_lat_name_from_da(da: xr.DataArray):
+def get_time_lon_lat_name_from_da(da: xr.DataArray,
+                                  name_from: str = 'coords'):
     """
 
     Parameters
     ----------
-    da :
+    da ():
+    name_from (): get name from coords by default, possible get name from dims.
 
     Returns
     -------
@@ -2411,43 +2867,51 @@ def get_time_lon_lat_name_from_da(da: xr.DataArray):
     """
     # definitions:
     possible_coords_names = {
-        'time': ['time', 'datetime', 'XTIME'],
-        'lon': ['lon', 'rlon', 'longitude', 'x', 'XLONG', 'XLONG_U', 'XLONG_V'],
-        'lat': ['lat', 'rlat', 'latitude', 'y', 'XLAT', 'XLAT_U', 'XLAT_V'],
+        'time': ['time', 'datetime', 'XTIME', 'Time'],
+        'lon': ['lon', 'west_east', 'rlon', 'longitude', 'nx', 'x', 'XLONG', 'XLONG_U', 'XLONG_V'],
+        'lat': ['lat', 'south_north', 'rlat', 'latitude', 'ny', 'y', 'XLAT', 'XLAT_U', 'XLAT_V'],
         'lev': ['height', 'bottom_top', 'lev', 'level', 'xlevel', 'lev_2'],
         'number': ['number', 'num', 'model']
         # the default name is 'number'
     }
+    # attention: these keys will be used as the standard names of DataArray
 
+    # ----------------------------- important:
     # coords = list(da.dims)
     # ATTENTION: num of dims is sometimes larger than coords: WRF has bottom_top but not such coords
+    # ATTENTION: according to the doc of Xarray: len(arr.dims) <= len(arr.coords) in general.
     # ATTENTION: dims names are not the same as coords, WRF dim='south_north', coords=XLAT
     # so save to use the coords names.
-    coords = list(dict(da.coords).keys())
-    dims = list(da.dims)
+    # -----------------------------
+    if name_from == 'coords':
+        da_names = list(dict(da.coords).keys())
+        # CTANG: coords should be a list not a string.
+        # since: 't' is in 'time', 'level' is in 'xlevel'
+        # and: ['t'] is not in ['time']; 't' is not in ['time']
 
-    # coords = list(da.coords._names)
-    # CTANG: coords should be a list not a string.
-    # since: 't' is in 'time', 'level' is in 'xlevel'
-    # and: ['t'] is not in ['time']; 't' is not in ['time']
+        dims = list(da.dims)
+
+    if name_from == 'dims':
+        da_names = list(da.dims)
+        dims = list(da.dims)
 
     # construct output
-    coords_names = {}
+    output_names = {}
 
     for key, possible_list in possible_coords_names.items():
-        coord_name = [x for x in possible_list if x in coords]
+        coord_name = [x for x in possible_list if x in da_names]
         if len(coord_name) == 1:
-            coords_names.update({key: coord_name[0]})
+            output_names.update({key: coord_name[0]})
         else:
             # check if this coords is missing in dims
             dim_name = [x for x in possible_list if x in dims]
             if len(dim_name) == 1:
-                coords_names.update({key: dim_name[0]})
+                output_names.update({key: dim_name[0]})
 
                 print(f'coords {key:s} not found, using dimension name: {dim_name[0]}')
                 warnings.warn('coords missing')
 
-    return coords_names
+    return output_names
 
 
 def value_cbar_max_min_of_da(da: xr.DataArray):
@@ -3027,8 +3491,8 @@ def monthly_circulation(lon: xr.DataArray, lat: xr.DataArray,
 
         # Plot the wind vectors
         ax.quiver(x[quiver_slices], y[quiver_slices],
-                         monthly_u[quiver_slices, quiver_slices], monthly_v[quiver_slices, quiver_slices],
-                         color='blue', zorder=2, **quiver_kwargs)
+                  monthly_u[quiver_slices, quiver_slices], monthly_v[quiver_slices, quiver_slices],
+                  color='blue', zorder=2, **quiver_kwargs)
 
         ax.text(0.93, 0.95, month_names[m],
                 horizontalalignment='right', verticalalignment='top', transform=ax.transAxes)
@@ -3088,7 +3552,6 @@ def convert_multi_da_by_new_dim(list_da: list, new_dim: dict):
 
 
 def get_gcm_list_in_dir(var: str, path: str):
-
     files: list = glob.glob(f'{path:s}/{var:s}*nc')
 
     gcm = list(set([s.split('_')[2] for s in files]))
@@ -3110,7 +3573,6 @@ def convert_cmip6_ensemble_2_standard_da(
         raw_file_tag: str,
         set_same_cal: bool = False,
         remapping: bool = False):
-
     """
     to read the raw cmip6 files, before mergetime, and do processes to save it to single netcdf file
     with the same lon lat, same calender.
@@ -3465,7 +3927,11 @@ def if_same_coords(map1: xr.DataArray, map2: xr.DataArray, coords_to_check=None)
 
 def read_to_standard_da(file_path: str, var: str):
     """
-    read wrf data and change the dim names to longitude, latitude, time
+    read da and change the dim names/order to time, lon, lat, lev, number
+    - the coords may have several dims, which will be reduced to one, if the coord is not changing
+        according to other dims
+    - the order/name of output da are defined in function convert_da_standard_dims_order
+
     Parameters
     ----------
     file_path :
@@ -3479,16 +3945,19 @@ def read_to_standard_da(file_path: str, var: str):
     ds = xr.open_dataset(file_path)
 
     da = ds[var]
+
+    # change the order of dims: necessary
+    # da = convert_da_standard_dims_order(da)
+
     coords = get_time_lon_lat_from_da(da)
 
     new_coords = dict()
 
-    possible_coords = ['time', 'number', 'lev', 'lat', 'lon']
-    # do not change the order
+    possible_coords = get_possible_standard_coords()
+    # ['time', 'lev', 'lat', 'lon', 'number']
 
     for d in possible_coords:
         if d in coords:
-            # my_dict['name'] = 'Nick'
             new_coords[d] = coords[d]
 
     new_da = xr.DataArray(da.values, dims=tuple(new_coords.keys()),
@@ -3517,6 +3986,7 @@ def read_csv_into_df_with_header(csv: str):
     df = df.set_index('DateTimeIndex')
     del df['DateTime']
 
+    # TODO: test todo
     return df
 
 
@@ -3524,6 +3994,11 @@ def match_station_to_grid_data(df: pd.DataFrame, column: str, da: xr.DataArray):
     """
     matching in situ data, type csv with header, to gridded data in DataArray
     merge in space and time
+
+    keyword: station, pixel, gridded, select, match, create
+    note: the codes to get station values are lost. not found so far.
+
+
     Parameters
     ----------
     df : dataframe with DateTimeIndex
@@ -3732,7 +4207,8 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     axes = axes.flatten()
 
     # ----------------------------- map 1 -----------------------------
-    plot_geo_map(data_map=map1, bias=0, ax=axes[0],
+    plot_geo_map(data_map=map1, bias=0,
+                 # ax=axes[0],
                  vmax=max(map1.max(), map2.max()), vmin=min(map1.min(), map2.min()))
     axes[0].text(0.93, 0.95, tag1, fontsize=12,
                  horizontalalignment='right', verticalalignment='top', transform=axes[0].transAxes)
@@ -3741,7 +4217,8 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
                  horizontalalignment='right', verticalalignment='bottom', transform=axes[0].transAxes)
 
     # ----------------------------- map 2 -----------------------------
-    plot_geo_map(data_map=map2, bias=0, ax=axes[1],
+    plot_geo_map(data_map=map2, bias=0,
+                 # ax=axes[1],
                  vmax=max(map1.max(), map2.max()), vmin=min(map1.min(), map2.min()))
     axes[1].text(0.93, 0.95, tag2, fontsize=12,
                  horizontalalignment='right', verticalalignment='top', transform=axes[1].transAxes)
@@ -3752,7 +4229,8 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
     # ----------------------------- plot bias -----------------------------
     bias_map = xr.DataArray(map1.values - map2.values, coords=[map1.lat, map1.lon], dims=map1.dims,
                             name=map1.name, attrs={'units': map1.assign_attrs().units})
-    plot_geo_map(data_map=bias_map, bias=1, ax=axes[2],
+    plot_geo_map(data_map=bias_map, bias=1,
+                 # ax=axes[2],
                  vmax=max(np.abs(bias_map.max()), np.abs(bias_map.min())),
                  vmin=min(-np.abs(bias_map.max()), -np.abs(bias_map.min())))
     axes[2].text(0.93, 0.95, f'{tag1:s}-{tag2:s}', fontsize=14,
@@ -3774,7 +4252,9 @@ def plot_compare_2geo_maps(map1: xr.DataArray, map2: xr.DataArray, tag1: str = '
         vmax = 1000
         vmin = -1000
 
-    plot_geo_map(data_map=bias_in_percent, bias=1, ax=axes[3], vmax=vmax, vmin=vmin)
+    plot_geo_map(data_map=bias_in_percent, bias=1,
+                 # ax=axes[3],
+                 vmax=vmax, vmin=vmin)
     axes[3].text(0.93, 0.95, f'({tag1:s}-{tag2:s})/{tag2:s} %', fontsize=14,
                  horizontalalignment='right', verticalalignment='top', transform=axes[3].transAxes)
 
@@ -3817,6 +4297,35 @@ def convert_df_shifttime(df: pd.DataFrame, second: int):
     new_df = pd.DataFrame(data=df.values, columns=df.columns, index=time_shifted)
 
     return new_df
+
+
+def convert_da_standard_dims_order(da: xr.DataArray):
+    """
+    read da and change the dim order to time, lon, lat, lev, number
+    however, the names are not changed
+
+    note: this function may take time when access values of da by da.values
+
+    :param da:
+    :type da:
+    :return:
+    :rtype:
+    """
+
+    dims_names = get_time_lon_lat_name_from_da(da, name_from='dims')
+
+    dims_order = []
+
+    possible_coords = get_possible_standard_coords()
+    # ['time', 'lev', 'lat', 'lon', 'number']
+
+    possible_name = [x for x in possible_coords if x in dims_names.keys()]
+    for i in range(len(dims_names)):
+        dims_order.append(dims_names[possible_name[i]])
+
+    new_da = da.transpose(*dims_order)
+
+    return new_da
 
 
 def convert_da_shifttime(da: xr.DataArray, second: int):
@@ -4105,6 +4614,24 @@ def calculate_climate_rolling_da(da: xr.DataArray):
     return mean
 
 
+def get_lon_lat_from_area(area: str):
+    """
+    get the lon and lat of this position
+    Args:
+        area ():
+
+    Returns:
+        lon, lat
+
+    """
+
+    if area == 'reu':
+        lon = 55.5
+        lat = -21.1
+
+    return lon, lat
+
+
 def value_lonlatbox_from_area(area: str):
     """
     get lonlat box of an area by names
@@ -4147,6 +4674,12 @@ def value_lonlatbox_from_area(area: str):
 
     if area == 'd_1km':
         box = [54.8, 58.1, -21.9, -19.5]
+
+    if area == 'detect':
+        box = [44, 64, -28, -12]
+
+    if area == 'm_r_m':
+        box = [40, 64, -30, -10]
 
     return box
 
@@ -4364,7 +4897,6 @@ def plot_multi_scenario_ensemble_time_series(da: xr.DataArray,
 
         if plot_every_model:
             for i in range(len(da.number)):
-
                 model_name = list(da.number.data)[i]
 
                 print(f'{model_name:s}, {str(i + 1):s}/{len(da.number):g} model')
@@ -4564,5 +5096,4 @@ def plot_cordex_ensemble_changes_map(past: xr.DataArray, mid: xr.DataArray, end:
     plt.savefig(f'./plot/{big_title.replace(" ", "_"):s}.png', dpi=200)
     plt.show()
     print(f'done')
-
-# testing
+# change from simu_detect
