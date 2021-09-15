@@ -11,6 +11,7 @@ import sys
 from typing import List
 import warnings
 import hydra
+import seaborn
 from omegaconf import DictConfig
 import cftime
 import glob
@@ -40,17 +41,29 @@ def my_coding_rules():
 
 # ----------------------------- definition -----------------------------
 
-def get_possible_standard_coords():
+def get_possible_standard_coords_dims(name_for: str = 'coords', ndim: int = 1):
     """
     that the definition of all project, used by read nc to standard da
     :return:
     :rtype:
     """
+
     standard_coords = ['time', 'lev', 'lat', 'lon', 'number']
+    standard_dims_1d = ['time', 'lev', 'y', 'x', 'num']
+    standard_dims_2d = ['time', 'lev', ['y', 'x'], ['y', 'x'], 'num']
     # this definition is used for all projects, that's the best order do not change this
     # key word: order, dims, coords,
 
-    return standard_coords
+    if name_for == 'coords':
+        return standard_coords
+    if name_for == 'dims':
+
+        if ndim == 1:
+            return standard_dims_1d
+        if ndim == 2:
+            return standard_dims_2d
+        else:
+            return 0
 
 
 # -----------------------------
@@ -2833,7 +2846,8 @@ def get_time_lon_lat_from_da(da: xr.DataArray):
                 lon_or_lat = reduce_ndim_coord(coord=lon_or_lat, dim_name=dim_names[lonlat], random=True).values
 
             if lonlat == 'lon':
-                lon_or_lat = np.array([x - 360 if x > 180 else x for x in lon_or_lat])
+                if lon_or_lat.ndim == 1:
+                    lon_or_lat = np.array([x - 360 if x > 180 else x for x in lon_or_lat])
 
             coords[lonlat] = lon_or_lat
 
@@ -3928,9 +3942,11 @@ def if_same_coords(map1: xr.DataArray, map2: xr.DataArray, coords_to_check=None)
 def read_to_standard_da(file_path: str, var: str):
     """
     read da and change the dim names/order to time, lon, lat, lev, number
-    - the coords may have several dims, which will be reduced to one, if the coord is not changing
-        according to other dims
-    - the order/name of output da are defined in function convert_da_standard_dims_order
+    note: the coords may have several dims, which will be reduced to one, if the coord is not changing
+            according to other dims, by the function reduce_ndim_coord
+    attention: if the lon and lat could not be reduce to 2D, or if the time could not be reduce to 1D,
+               this function will be crash.
+    note: order/name of output da are defined in function get_possible_standard_coords_dims
 
     Parameters
     ----------
@@ -3951,17 +3967,54 @@ def read_to_standard_da(file_path: str, var: str):
 
     coords = get_time_lon_lat_from_da(da)
 
-    new_coords = dict()
-
-    possible_coords = get_possible_standard_coords()
+    possible_coords = get_possible_standard_coords_dims()
     # ['time', 'lev', 'lat', 'lon', 'number']
 
+    # prepare new coords with the order and standard names of function: get_possible_standard_coords_dims
+    new_coords = dict()
+    max_coords_ndim = 1
     for d in possible_coords:
         if d in coords:
             new_coords[d] = coords[d]
+            max_coords_ndim = max(max_coords_ndim, coords[d].ndim)
 
-    new_da = xr.DataArray(da.values, dims=tuple(new_coords.keys()),
-                          coords=new_coords, name=var, attrs=da.attrs)
+    # to prepare dims names for data and for coords
+    possible_dims_coords = get_possible_standard_coords_dims(name_for='dims', ndim=max_coords_ndim) # 1d or 2d
+    possible_dims_data_1d = get_possible_standard_coords_dims(name_for='dims', ndim=1)
+
+    # get new dim, for data (time, x, y) and for coords lon: [x,y] separately
+    new_dims_data = dict()
+    new_dims_coords = dict()
+    for d in possible_coords:
+        if d in coords:
+            new_dims_coords[d] = possible_dims_coords[possible_coords.index(d)]
+            new_dims_data[d] = possible_dims_data_1d[possible_coords.index(d)]
+
+    # prepare coords parameters for da:
+    coords_param = dict()
+    for cod, dim in zip(new_coords.keys(), new_dims_coords.values()):
+        coords_param[cod] = (dim, new_coords[cod])
+
+        # example of coords_param:
+        # kkk={"time": (new_coords['time']),
+        # "lat": (['y', 'x'], new_coords['lat']),
+        # "lon": (['y', 'x'], new_coords['lon'])}
+
+    # create new da:
+    new_da = xr.DataArray(da.values,
+                          dims=list(new_dims_data.values()),
+                          coords=coords_param,
+                          name=var, attrs=da.attrs)
+
+    # if max_coords_ndim == 2:
+    #     new_da = xr.DataArray(da.values,
+    #                           dims=list(new_dims.values()),
+    #                           coords={
+    #                               "time": (new_coords['time']),
+    #                               "lat": (['y', 'x'], new_coords['lat']),
+    #                               "lon": (['y', 'x'], new_coords['lon']),
+    #                           },
+    #                           name=var, attrs=da.attrs)
 
     return new_da
 
@@ -4316,7 +4369,7 @@ def convert_da_standard_dims_order(da: xr.DataArray):
 
     dims_order = []
 
-    possible_coords = get_possible_standard_coords()
+    possible_coords = get_possible_standard_coords_dims()
     # ['time', 'lev', 'lat', 'lon', 'number']
 
     possible_name = [x for x in possible_coords if x in dims_names.keys()]
