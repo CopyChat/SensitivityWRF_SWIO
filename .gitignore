@@ -11,3 +11,6 @@
 
 
 /sensitivity.log
+.DS_Store
+/.idea
+/.github
